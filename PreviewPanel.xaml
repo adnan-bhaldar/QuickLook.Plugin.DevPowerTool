@@ -1,0 +1,166 @@
+<!--
+    QuickLook.Plugin.DevConfig — PreviewPanel.xaml
+    Main container control rendered inside the QuickLook preview window.
+    Contains:
+      • Toolbar  (file-type badge + eye-toggle for .env files)
+      • FlowDocumentScrollViewer  (the rendered source with swatches / masking)
+-->
+<UserControl
+    x:Class="QuickLook.Plugin.DevConfig.PreviewPanel"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    mc:Ignorable="d"
+    d:DesignHeight="650" d:DesignWidth="900"
+    UseLayoutRounding="True"
+    TextOptions.TextFormattingMode="Display">
+
+    <UserControl.Resources>
+        <!-- Toolbar gradient — adapts to light/dark via code-behind -->
+        <LinearGradientBrush x:Key="ToolbarBrush" StartPoint="0,0" EndPoint="0,1">
+            <GradientStop Color="#222233" Offset="0"/>
+            <GradientStop Color="#1A1A2A" Offset="1"/>
+        </LinearGradientBrush>
+
+        <!-- Badge pill style -->
+        <Style x:Key="BadgeStyle" TargetType="Border">
+            <Setter Property="CornerRadius"    Value="10"/>
+            <Setter Property="Padding"         Value="8,3"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+
+        <!-- Toolbar button base -->
+        <Style x:Key="ToolbarButtonStyle" TargetType="Button">
+            <Setter Property="Background"   Value="Transparent"/>
+            <Setter Property="BorderBrush"  Value="Transparent"/>
+            <Setter Property="Foreground"   Value="#AAAACC"/>
+            <Setter Property="FontSize"     Value="14"/>
+            <Setter Property="Padding"      Value="8,4"/>
+            <Setter Property="Cursor"       Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="bd"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="6"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="#33FFFFFF"/>
+                                <Setter Property="Foreground" Value="#FFFFFF"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="#55FFFFFF"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </UserControl.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <!-- Toolbar -->
+            <RowDefinition Height="40"/>
+            <!-- Content -->
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <!-- ══ TOOLBAR ═══════════════════════════════════════════════════ -->
+        <Border Grid.Row="0"
+                x:Name="ToolbarBorder"
+                Background="{StaticResource ToolbarBrush}"
+                BorderBrush="#33FFFFFF"
+                BorderThickness="0,0,0,1">
+
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <!-- Left: file-type badge -->
+                <StackPanel Grid.Column="0"
+                            Orientation="Horizontal"
+                            VerticalAlignment="Center"
+                            Margin="12,0,0,0">
+
+                    <Border x:Name="FileTypeBadge"
+                            Style="{StaticResource BadgeStyle}"
+                            Background="#3A3A5C">
+                        <TextBlock x:Name="FileTypeLabel"
+                                   Text="CSS"
+                                   Foreground="#89B4FA"
+                                   FontFamily="Cascadia Code, Consolas, monospace"
+                                   FontSize="11"
+                                   FontWeight="SemiBold"/>
+                    </Border>
+
+                    <!-- Colour swatch count badge (shown for non-env files) -->
+                    <Border x:Name="SwatchCountBadge"
+                            Style="{StaticResource BadgeStyle}"
+                            Background="#2A3A2A"
+                            Margin="6,0,0,0"
+                            Visibility="Collapsed">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="🎨 "
+                                       FontSize="10"
+                                       VerticalAlignment="Center"/>
+                            <TextBlock x:Name="SwatchCountLabel"
+                                       Text="0 colours"
+                                       Foreground="#A6E3A1"
+                                       FontFamily="Cascadia Code, Consolas, monospace"
+                                       FontSize="11"/>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+
+                <!-- Right: eye toggle (only visible for .env files) -->
+                <StackPanel Grid.Column="1"
+                            Orientation="Horizontal"
+                            VerticalAlignment="Center"
+                            Margin="0,0,10,0">
+
+                    <Button x:Name="EyeToggleButton"
+                            Style="{StaticResource ToolbarButtonStyle}"
+                            Visibility="Collapsed"
+                            Click="EyeToggleButton_Click"
+                            ToolTip="Toggle secret visibility">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock x:Name="EyeIcon"
+                                       Text="👁"
+                                       FontSize="14"
+                                       VerticalAlignment="Center"
+                                       Margin="0,0,5,0"/>
+                            <TextBlock x:Name="EyeLabel"
+                                       Text="Reveal"
+                                       FontFamily="Segoe UI, sans-serif"
+                                       FontSize="12"
+                                       VerticalAlignment="Center"
+                                       Foreground="#AAAACC"/>
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- ══ CONTENT: FlowDocument viewer ═════════════════════════════ -->
+        <FlowDocumentScrollViewer
+            Grid.Row="1"
+            x:Name="DocViewer"
+            HorizontalScrollBarVisibility="Auto"
+            VerticalScrollBarVisibility="Auto"
+            IsSelectionEnabled="True"
+            IsToolBarVisible="False"
+            Document="{x:Null}"
+            Background="#1E1E2E"/>
+
+    </Grid>
+</UserControl>

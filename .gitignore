@@ -1,0 +1,24 @@
+# Visual Studio artifacts
+.vs/
+bin/
+obj/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# NuGet
+packages/
+*.nupkg
+*.nuget.props
+*.nuget.targets
+
+# Build output
+*.qlplugin
+
+# Rider / JetBrains
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store
