@@ -1,7 +1,8 @@
 // ============================================================
-// QuickLook.Plugin.DevPowerTool — ColorParser.cs
+// QuickLook.Plugin.DevPowerTool — Helpers/ColorParser.cs
 // Detects CSS color tokens in a line of text using compiled
 // regular expressions for best performance on large files.
+// Net462 compatible — no Math.Clamp (that is .NET 5+).
 // ============================================================
 
 using System;
@@ -39,12 +40,12 @@ namespace QuickLook.Plugin.DevPowerTool
             @"#(?:[0-9A-Fa-f]{8}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{3,4})\b",
             RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
-        // rgb(r, g, b) — integers 0-255
+        // rgb(r, g, b)
         private static readonly Regex RgbRegex = new Regex(
             @"rgb\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*\)",
             RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
-        // rgba(r, g, b, a) — a is 0.0-1.0
+        // rgba(r, g, b, a)
         private static readonly Regex RgbaRegex = new Regex(
             @"rgba\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*([\d.]+)\s*\)",
             RegexOptions.Compiled | RegexOptions.IgnoreCase);
@@ -75,14 +76,19 @@ namespace QuickLook.Plugin.DevPowerTool
             ExtractHsl(line, results);
             ExtractHsla(line, results);
 
-            // Sort by position so the UI can walk left→right without overlap checks
             results.Sort((a, b) => a.Index.CompareTo(b.Index));
-
-            // Remove overlapping matches (keep the first/left-most)
             return RemoveOverlaps(results);
         }
 
         // ── Private helpers ───────────────────────────────────────────────
+
+        /// <summary>Clamps value between min and max. Replaces Math.Clamp (not in net462).</summary>
+        private static int Clamp(int value, int min, int max)
+        {
+            if (value < min) return min;
+            if (value > max) return max;
+            return value;
+        }
 
         private static void ExtractHex(string line, List<ColorToken> list)
         {
@@ -100,11 +106,7 @@ namespace QuickLook.Plugin.DevPowerTool
                 if (!TryByte(m.Groups[1].Value, out byte r)) continue;
                 if (!TryByte(m.Groups[2].Value, out byte g)) continue;
                 if (!TryByte(m.Groups[3].Value, out byte b)) continue;
-                list.Add(new ColorToken
-                {
-                    Index = m.Index, Raw = m.Value,
-                    Color = Color.FromRgb(r, g, b)
-                });
+                list.Add(new ColorToken { Index = m.Index, Raw = m.Value, Color = Color.FromRgb(r, g, b) });
             }
         }
 
@@ -116,12 +118,8 @@ namespace QuickLook.Plugin.DevPowerTool
                 if (!TryByte(m.Groups[2].Value, out byte g)) continue;
                 if (!TryByte(m.Groups[3].Value, out byte b)) continue;
                 if (!double.TryParse(m.Groups[4].Value, out double a)) continue;
-                var alpha = (byte)Math.Clamp((int)(a * 255), 0, 255);
-                list.Add(new ColorToken
-                {
-                    Index = m.Index, Raw = m.Value,
-                    Color = Color.FromArgb(alpha, r, g, b)
-                });
+                var alpha = (byte)Clamp((int)(a * 255), 0, 255);
+                list.Add(new ColorToken { Index = m.Index, Raw = m.Value, Color = Color.FromArgb(alpha, r, g, b) });
             }
         }
 
@@ -132,11 +130,7 @@ namespace QuickLook.Plugin.DevPowerTool
                 if (!double.TryParse(m.Groups[1].Value, out double h)) continue;
                 if (!double.TryParse(m.Groups[2].Value, out double s)) continue;
                 if (!double.TryParse(m.Groups[3].Value, out double l)) continue;
-                list.Add(new ColorToken
-                {
-                    Index = m.Index, Raw = m.Value,
-                    Color = HslToColor(h, s / 100.0, l / 100.0, 1.0)
-                });
+                list.Add(new ColorToken { Index = m.Index, Raw = m.Value, Color = HslToColor(h, s / 100.0, l / 100.0, 1.0) });
             }
         }
 
@@ -148,11 +142,7 @@ namespace QuickLook.Plugin.DevPowerTool
                 if (!double.TryParse(m.Groups[2].Value, out double s)) continue;
                 if (!double.TryParse(m.Groups[3].Value, out double l)) continue;
                 if (!double.TryParse(m.Groups[4].Value, out double a)) continue;
-                list.Add(new ColorToken
-                {
-                    Index = m.Index, Raw = m.Value,
-                    Color = HslToColor(h, s / 100.0, l / 100.0, a)
-                });
+                list.Add(new ColorToken { Index = m.Index, Raw = m.Value, Color = HslToColor(h, s / 100.0, l / 100.0, a) });
             }
         }
 
@@ -160,29 +150,28 @@ namespace QuickLook.Plugin.DevPowerTool
         {
             try
             {
-                // Strip leading '#'
                 var raw = hex.TrimStart('#');
                 byte a = 255, r, g, b;
 
                 switch (raw.Length)
                 {
-                    case 3: // #rgb → #rrggbb
+                    case 3:
                         r = Convert.ToByte(new string(raw[0], 2), 16);
                         g = Convert.ToByte(new string(raw[1], 2), 16);
                         b = Convert.ToByte(new string(raw[2], 2), 16);
                         break;
-                    case 4: // #rgba
+                    case 4:
                         r = Convert.ToByte(new string(raw[0], 2), 16);
                         g = Convert.ToByte(new string(raw[1], 2), 16);
                         b = Convert.ToByte(new string(raw[2], 2), 16);
                         a = Convert.ToByte(new string(raw[3], 2), 16);
                         break;
-                    case 6: // #rrggbb
+                    case 6:
                         r = Convert.ToByte(raw.Substring(0, 2), 16);
                         g = Convert.ToByte(raw.Substring(2, 2), 16);
                         b = Convert.ToByte(raw.Substring(4, 2), 16);
                         break;
-                    case 8: // #rrggbbaa
+                    case 8:
                         r = Convert.ToByte(raw.Substring(0, 2), 16);
                         g = Convert.ToByte(raw.Substring(2, 2), 16);
                         b = Convert.ToByte(raw.Substring(4, 2), 16);
@@ -193,22 +182,15 @@ namespace QuickLook.Plugin.DevPowerTool
                 }
                 return Color.FromArgb(a, r, g, b);
             }
-            catch
-            {
-                return null;
-            }
+            catch { return null; }
         }
 
-        /// <summary>
-        /// Converts HSL (hue 0-360, saturation 0-1, lightness 0-1, alpha 0-1)
-        /// to a WPF Color using standard formulae.
-        /// </summary>
         private static Color HslToColor(double h, double s, double l, double a)
         {
             double r, g, b;
             if (Math.Abs(s) < 1e-9)
             {
-                r = g = b = l; // achromatic
+                r = g = b = l;
             }
             else
             {
@@ -220,10 +202,10 @@ namespace QuickLook.Plugin.DevPowerTool
             }
 
             return Color.FromArgb(
-                (byte)Math.Clamp((int)(a   * 255), 0, 255),
-                (byte)Math.Clamp((int)(r   * 255), 0, 255),
-                (byte)Math.Clamp((int)(g   * 255), 0, 255),
-                (byte)Math.Clamp((int)(b   * 255), 0, 255));
+                (byte)Clamp((int)(a * 255), 0, 255),
+                (byte)Clamp((int)(r * 255), 0, 255),
+                (byte)Clamp((int)(g * 255), 0, 255),
+                (byte)Clamp((int)(b * 255), 0, 255));
         }
 
         private static double HueToRgb(double p, double q, double t)
@@ -243,10 +225,6 @@ namespace QuickLook.Plugin.DevPowerTool
             return false;
         }
 
-        /// <summary>
-        /// Removes overlapping tokens keeping the left-most one.
-        /// Assumes <paramref name="sorted"/> is already sorted by Index.
-        /// </summary>
         private static List<ColorToken> RemoveOverlaps(List<ColorToken> sorted)
         {
             var clean = new List<ColorToken>();
