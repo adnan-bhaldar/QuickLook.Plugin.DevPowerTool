@@ -43,11 +43,15 @@ jobs:
         run: nuget restore QuickLook.Plugin.DevPowerTool.sln
 
       # ── 4. Build Release ─────────────────────────────────────────────────
+      # PreBuildEventUseInParallel=false + PreBuildEvent="" skips the
+      # update-version.ps1 pre-build script inside QuickLook.Common.csproj
+      # which does not exist in the CI environment.
       - name: Build solution
         run: |
           msbuild QuickLook.Plugin.DevPowerTool.sln `
             /p:Configuration=Release `
             /p:Platform="Any CPU" `
+            /p:PreBuildEvent="" `
             /m
 
       # ── 5. Package into .qlplugin ────────────────────────────────────────
