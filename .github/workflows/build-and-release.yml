@@ -86,8 +86,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release delete latest --yes --cleanup-tag 2>$null
-          Write-Host "Old pre-release deleted (or did not exist yet)"
+          # Pipe to Out-Null suppresses output; exit 0 ensures we never
+          # fail here — on first run the release simply doesn't exist yet.
+          gh release delete latest --yes --cleanup-tag 2>&1 | Out-Null
+          exit 0
 
       - name: Create pre-release
         if: github.ref == 'refs/heads/main'
