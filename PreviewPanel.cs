@@ -1,9 +1,17 @@
 // ============================================================
 // QuickLook.Plugin.DevPowerTool — PreviewPanel.cs
-// Fully code-behind WPF UserControl — no XAML file needed.
-// This avoids all x:Name / InitializeComponent resolution
-// issues that occur with SDK-style net462 + UseWPF projects
-// in CI environments.
+//
+// Main preview control. Uses AvalonEdit (ICSharpCode.AvalonEdit)
+// exactly as QuickLook's built-in TextViewer does:
+//   • Same TextEditor control
+//   • Same font / line numbers / scrollbars
+//   • Same OSThemeHelper for dark/light detection
+//   • Same syntax highlighting via HighlightingManager
+//
+// Added on top of TextViewer:
+//   • Colour swatches for CSS/SCSS/SASS/JSON/JS/TS colour values
+//   • Colour swatches for Tailwind v3+v4 utility class names
+//   • .env privacy masking with a clean on/off ToggleButton
 // ============================================================
 
 using System;
@@ -13,34 +21,33 @@ using System.Text;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Documents;
+using System.Windows.Controls.Primitives;
 using System.Windows.Media;
+using ICSharpCode.AvalonEdit;
+using ICSharpCode.AvalonEdit.Highlighting;
+using QuickLook.Common.Helpers;
 
 namespace QuickLook.Plugin.DevPowerTool
 {
     public class PreviewPanel : UserControl
     {
         // ── Constants ─────────────────────────────────────────────────────
-        private const long MaxFileSizeBytes = 2 * 1024 * 1024; // 2 MB
-        private const int  MaxRenderLines   = 5_000;
+        private const long MaxBytes    = 2 * 1024 * 1024; // 2 MB
+        private const int  MaxLines    = 5_000;
 
         // ── State ─────────────────────────────────────────────────────────
         private readonly string      _path;
         private readonly DevFileType _fileType;
+        private readonly bool        _isDark;
 
         private List<EnvLine> _envLines;
-        private bool          _secretsRevealed = false;
-        private int           _totalColorCount = 0;
+        private bool          _revealed = false;
 
-        // ── UI controls (built in BuildUI, used throughout) ───────────────
-        private Border                    _fileTypeBadge;
-        private TextBlock                 _fileTypeLabel;
-        private Border                    _swatchCountBadge;
-        private TextBlock                 _swatchCountLabel;
-        private Button                    _eyeToggleButton;
-        private TextBlock                 _eyeIcon;
-        private TextBlock                 _eyeLabel;
-        private FlowDocumentScrollViewer  _docViewer;
+        // ── Controls ──────────────────────────────────────────────────────
+        private TextEditor   _editor;
+        private TextBlock    _swatchCount;
+        private Border       _swatchBadge;
+        private ToggleButton _envToggle;
 
         // ── Constructor ───────────────────────────────────────────────────
 
@@ -48,390 +55,417 @@ namespace QuickLook.Plugin.DevPowerTool
         {
             _path     = path;
             _fileType = fileType;
+            _isDark   = OSThemeHelper.AppsUseDarkTheme();
 
-            BuildUI();
-            Loaded += async (s, e) =>
-            {
-                ConfigureToolbar();
-                await LoadAndRenderAsync();
-            };
+            Build();
+            Loaded += async (s, e) => await LoadAsync();
         }
 
-        // ── UI Construction ───────────────────────────────────────────────
+        // ══════════════════════════════════════════════════════════════════
+        // UI CONSTRUCTION
+        // ══════════════════════════════════════════════════════════════════
 
-        private void BuildUI()
+        private void Build()
         {
-            // Root grid: row 0 = toolbar (40px), row 1 = content
             var root = new Grid();
-            root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(40) });
+            root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(34) });
             root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
 
-            // ── Toolbar ───────────────────────────────────────────────────
-            var toolbarBorder = new Border
-            {
-                Background      = new SolidColorBrush(Color.FromRgb(0x1A, 0x1A, 0x2A)),
-                BorderBrush     = new SolidColorBrush(Color.FromArgb(51, 255, 255, 255)),
-                BorderThickness = new Thickness(0, 0, 0, 1)
-            };
-            Grid.SetRow(toolbarBorder, 0);
+            Grid.SetRow(BuildToolbar(), 0);
+            root.Children.Add(BuildToolbar());
 
-            var toolbarGrid = new Grid();
-            toolbarGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            toolbarGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            toolbarBorder.Child = toolbarGrid;
-
-            // Left: badge stack
-            var leftStack = new StackPanel
-            {
-                Orientation         = Orientation.Horizontal,
-                VerticalAlignment   = VerticalAlignment.Center,
-                Margin              = new Thickness(12, 0, 0, 0)
-            };
-            Grid.SetColumn(leftStack, 0);
-
-            _fileTypeLabel = new TextBlock
-            {
-                FontFamily = new FontFamily("Cascadia Code, Consolas, monospace"),
-                FontSize   = 11,
-                FontWeight = FontWeights.SemiBold,
-                Foreground = new SolidColorBrush(Color.FromRgb(0x89, 0xB4, 0xFA))
-            };
-            _fileTypeBadge = new Border
-            {
-                CornerRadius      = new CornerRadius(10),
-                Padding           = new Thickness(8, 3, 8, 3),
-                VerticalAlignment = VerticalAlignment.Center,
-                Background        = new SolidColorBrush(Color.FromRgb(0x3A, 0x3A, 0x5C)),
-                Child             = _fileTypeLabel
-            };
-            leftStack.Children.Add(_fileTypeBadge);
-
-            // Swatch count badge (hidden by default)
-            _swatchCountLabel = new TextBlock
-            {
-                FontFamily = new FontFamily("Cascadia Code, Consolas, monospace"),
-                FontSize   = 11,
-                Foreground = new SolidColorBrush(Color.FromRgb(0xA6, 0xE3, 0xA1))
-            };
-            var swatchIcon = new TextBlock
-            {
-                Text              = "🎨 ",
-                FontSize          = 10,
-                VerticalAlignment = VerticalAlignment.Center
-            };
-            var swatchInner = new StackPanel { Orientation = Orientation.Horizontal };
-            swatchInner.Children.Add(swatchIcon);
-            swatchInner.Children.Add(_swatchCountLabel);
-
-            _swatchCountBadge = new Border
-            {
-                CornerRadius      = new CornerRadius(10),
-                Padding           = new Thickness(8, 3, 8, 3),
-                VerticalAlignment = VerticalAlignment.Center,
-                Margin            = new Thickness(6, 0, 0, 0),
-                Background        = new SolidColorBrush(Color.FromRgb(0x2A, 0x3A, 0x2A)),
-                Child             = swatchInner,
-                Visibility        = Visibility.Collapsed
-            };
-            leftStack.Children.Add(_swatchCountBadge);
-            toolbarGrid.Children.Add(leftStack);
-
-            // Right: eye toggle button
-            _eyeIcon = new TextBlock
-            {
-                Text              = "👁",
-                FontSize          = 14,
-                VerticalAlignment = VerticalAlignment.Center,
-                Margin            = new Thickness(0, 0, 5, 0)
-            };
-            _eyeLabel = new TextBlock
-            {
-                Text              = "Reveal",
-                FontFamily        = new FontFamily("Segoe UI, sans-serif"),
-                FontSize          = 12,
-                VerticalAlignment = VerticalAlignment.Center,
-                Foreground        = new SolidColorBrush(Color.FromRgb(0xAA, 0xAA, 0xCC))
-            };
-            var eyeInner = new StackPanel { Orientation = Orientation.Horizontal };
-            eyeInner.Children.Add(_eyeIcon);
-            eyeInner.Children.Add(_eyeLabel);
-
-            _eyeToggleButton = new Button
-            {
-                Content           = eyeInner,
-                Background        = Brushes.Transparent,
-                BorderBrush       = Brushes.Transparent,
-                Foreground        = new SolidColorBrush(Color.FromRgb(0xAA, 0xAA, 0xCC)),
-                Padding           = new Thickness(8, 4, 8, 4),
-                Cursor            = System.Windows.Input.Cursors.Hand,
-                Visibility        = Visibility.Collapsed,
-                VerticalAlignment = VerticalAlignment.Center,
-                Margin            = new Thickness(0, 0, 10, 0)
-            };
-            _eyeToggleButton.Click += EyeToggleButton_Click;
-
-            var rightStack = new StackPanel
-            {
-                Orientation       = Orientation.Horizontal,
-                VerticalAlignment = VerticalAlignment.Center
-            };
-            rightStack.Children.Add(_eyeToggleButton);
-            Grid.SetColumn(rightStack, 1);
-            toolbarGrid.Children.Add(rightStack);
-
-            root.Children.Add(toolbarBorder);
-
-            // ── FlowDocumentScrollViewer ───────────────────────────────────
-            _docViewer = new FlowDocumentScrollViewer
-            {
-                HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
-                VerticalScrollBarVisibility   = ScrollBarVisibility.Auto,
-                IsSelectionEnabled            = true,
-                IsToolBarVisible              = false,
-                Background                    = new SolidColorBrush(Color.FromRgb(0x1E, 0x1E, 0x2E))
-            };
-            Grid.SetRow(_docViewer, 1);
-            root.Children.Add(_docViewer);
+            _editor = BuildEditor();
+            Grid.SetRow(_editor, 1);
+            root.Children.Add(_editor);
 
             Content = root;
         }
 
-        // ── Toolbar setup ─────────────────────────────────────────────────
+        // ── Toolbar ───────────────────────────────────────────────────────
 
-        private void ConfigureToolbar()
+        private Border BuildToolbar()
         {
-            switch (_fileType)
+            // Colours exactly matching QuickLook's own toolbar chrome
+            var bg     = _isDark ? Color.FromRgb(0x2D, 0x2D, 0x2D) : Color.FromRgb(0xF0, 0xF0, 0xF0);
+            var border = _isDark ? Color.FromRgb(0x45, 0x45, 0x45) : Color.FromRgb(0xCC, 0xCC, 0xCC);
+
+            var toolbar = new Border
             {
-                case DevFileType.Stylesheet:
-                    _fileTypeLabel.Text       = Path.GetExtension(_path).TrimStart('.').ToUpper();
-                    _fileTypeBadge.Background = new SolidColorBrush(Color.FromRgb(0x21, 0x4B, 0x7A));
-                    _fileTypeLabel.Foreground = new SolidColorBrush(Color.FromRgb(0x89, 0xB4, 0xFA));
-                    break;
+                Background      = new SolidColorBrush(bg),
+                BorderBrush     = new SolidColorBrush(border),
+                BorderThickness = new Thickness(0, 0, 0, 1),
+                Padding         = new Thickness(8, 0, 8, 0)
+            };
 
-                case DevFileType.TailwindConfig:
-                    _fileTypeLabel.Text       = "TAILWIND";
-                    _fileTypeBadge.Background = new SolidColorBrush(Color.FromRgb(0x0E, 0x38, 0x30));
-                    _fileTypeLabel.Foreground = new SolidColorBrush(Color.FromRgb(0x38, 0xBD, 0xF8));
-                    break;
+            var grid = new Grid();
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            toolbar.Child = grid;
 
-                case DevFileType.ThemeConfig:
-                    _fileTypeLabel.Text       = Path.GetExtension(_path).TrimStart('.').ToUpper();
-                    _fileTypeBadge.Background = new SolidColorBrush(Color.FromRgb(0x3A, 0x2A, 0x10));
-                    _fileTypeLabel.Foreground = new SolidColorBrush(Color.FromRgb(0xF5, 0xC5, 0x18));
-                    break;
+            // ── Left: file-type badge + swatch count ──────────────────────
+            var left = new StackPanel
+            {
+                Orientation       = Orientation.Horizontal,
+                VerticalAlignment = VerticalAlignment.Center,
+                Gap               = 6
+            };
 
-                case DevFileType.EnvFile:
-                    _fileTypeLabel.Text            = ".ENV";
-                    _fileTypeBadge.Background      = new SolidColorBrush(Color.FromRgb(0x3A, 0x10, 0x10));
-                    _fileTypeLabel.Foreground      = new SolidColorBrush(Color.FromRgb(0xF3, 0x8B, 0xA8));
-                    _eyeToggleButton.Visibility    = Visibility.Visible;
-                    UpdateEyeButton();
-                    break;
+            var badge = MakeBadge(GetBadgeText(), GetBadgeColors());
+            left.Children.Add(badge);
 
-                default:
-                    _fileTypeLabel.Text       = "TEXT";
-                    _fileTypeBadge.Background = new SolidColorBrush(Color.FromRgb(0x2A, 0x2A, 0x3A));
-                    _fileTypeLabel.Foreground = new SolidColorBrush(Color.FromRgb(0xCC, 0xCC, 0xDD));
-                    break;
+            _swatchCount = new TextBlock
+            {
+                FontFamily        = new FontFamily("Segoe UI, sans-serif"),
+                FontSize          = 11,
+                VerticalAlignment = VerticalAlignment.Center,
+                Foreground        = new SolidColorBrush(_isDark
+                    ? Color.FromRgb(0xA6, 0xE3, 0xA1)
+                    : Color.FromRgb(0x2E, 0x7D, 0x32))
+            };
+            _swatchBadge = new Border
+            {
+                Padding           = new Thickness(6, 2, 6, 2),
+                CornerRadius      = new CornerRadius(4),
+                VerticalAlignment = VerticalAlignment.Center,
+                Background        = new SolidColorBrush(_isDark
+                    ? Color.FromRgb(0x1E, 0x35, 0x1E)
+                    : Color.FromRgb(0xE8, 0xF5, 0xE9)),
+                Child             = _swatchCount,
+                Visibility        = Visibility.Collapsed
+            };
+            left.Children.Add(_swatchBadge);
+
+            Grid.SetColumn(left, 0);
+            grid.Children.Add(left);
+
+            // ── Right: env toggle (only for .env files) ───────────────────
+            if (_fileType == DevFileType.EnvFile)
+            {
+                _envToggle = BuildToggle();
+                _envToggle.Checked   += (s, e) => { _revealed = true;  RenderEnv(); };
+                _envToggle.Unchecked += (s, e) => { _revealed = false; RenderEnv(); };
+
+                var right = new StackPanel
+                {
+                    Orientation       = Orientation.Horizontal,
+                    VerticalAlignment = VerticalAlignment.Center
+                };
+                right.Children.Add(_envToggle);
+                Grid.SetColumn(right, 1);
+                grid.Children.Add(right);
             }
+
+            return toolbar;
         }
 
-        private void UpdateEyeButton()
+        /// <summary>
+        /// Builds a native-feeling WPF ToggleButton that looks like a
+        /// proper on/off switch — no emoji, no icon corruption.
+        /// </summary>
+        private ToggleButton BuildToggle()
         {
-            if (_secretsRevealed)
+            // Label text changes on check/uncheck via event, set after construction
+            var label = new TextBlock
             {
-                _eyeIcon.Text       = "🙈";
-                _eyeLabel.Text      = "Hide";
-                _eyeLabel.Foreground = new SolidColorBrush(Color.FromRgb(0xF3, 0x8B, 0xA8));
+                Text              = "Show secrets",
+                FontFamily        = new FontFamily("Segoe UI, sans-serif"),
+                FontSize          = 11,
+                VerticalAlignment = VerticalAlignment.Center,
+                Foreground        = new SolidColorBrush(_isDark
+                    ? Color.FromRgb(0xCC, 0xCC, 0xCC)
+                    : Color.FromRgb(0x33, 0x33, 0x33))
+            };
+
+            var toggle = new ToggleButton
+            {
+                Content           = label,
+                IsChecked         = false,
+                VerticalAlignment = VerticalAlignment.Center,
+                Padding           = new Thickness(8, 3, 8, 3),
+                FontSize          = 11,
+                Cursor            = System.Windows.Input.Cursors.Hand,
+                Background        = new SolidColorBrush(_isDark
+                    ? Color.FromRgb(0x3A, 0x3A, 0x3A)
+                    : Color.FromRgb(0xE2, 0xE2, 0xE2)),
+                BorderBrush       = new SolidColorBrush(_isDark
+                    ? Color.FromRgb(0x60, 0x60, 0x60)
+                    : Color.FromRgb(0xAA, 0xAA, 0xAA)),
+                BorderThickness   = new Thickness(1)
+            };
+
+            // Update label text when state changes
+            toggle.Checked   += (s, e) => label.Text = "Hide secrets";
+            toggle.Unchecked += (s, e) => label.Text = "Show secrets";
+
+            return toggle;
+        }
+
+        private Border MakeBadge(string text, (Color bg, Color fg) colors)
+        {
+            return new Border
+            {
+                Background        = new SolidColorBrush(colors.bg),
+                CornerRadius      = new CornerRadius(4),
+                Padding           = new Thickness(6, 2, 6, 2),
+                VerticalAlignment = VerticalAlignment.Center,
+                Child             = new TextBlock
+                {
+                    Text       = text,
+                    FontFamily = new FontFamily("Cascadia Code, Consolas, monospace"),
+                    FontSize   = 10,
+                    FontWeight = FontWeights.SemiBold,
+                    Foreground = new SolidColorBrush(colors.fg)
+                }
+            };
+        }
+
+        // ── AvalonEdit TextEditor — identical settings to TextViewer ──────
+
+        private TextEditor BuildEditor()
+        {
+            var ed = new TextEditor
+            {
+                IsReadOnly                    = true,
+                ShowLineNumbers               = true,
+                FontFamily                    = new FontFamily("Cascadia Code, Consolas, Courier New, monospace"),
+                FontSize                      = 13,
+                WordWrap                      = false,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+                VerticalScrollBarVisibility   = ScrollBarVisibility.Auto,
+                Options = new TextEditorOptions
+                {
+                    EnableHyperlinks            = false,
+                    EnableEmailHyperlinks       = false,
+                    ShowBoxForControlCharacters = true,
+                    ConvertTabsToSpaces         = false,
+                    IndentationSize             = 4
+                }
+            };
+
+            // Theme — matches what TextViewer sets
+            if (_isDark)
+            {
+                ed.Background            = new SolidColorBrush(Color.FromRgb(0x1E, 0x1E, 0x1E));
+                ed.Foreground            = new SolidColorBrush(Color.FromRgb(0xD4, 0xD4, 0xD4));
+                ed.LineNumbersForeground = new SolidColorBrush(Color.FromRgb(0x85, 0x85, 0x85));
             }
             else
             {
-                _eyeIcon.Text       = "👁";
-                _eyeLabel.Text      = "Reveal";
-                _eyeLabel.Foreground = new SolidColorBrush(Color.FromRgb(0xAA, 0xAA, 0xCC));
+                ed.Background            = new SolidColorBrush(Colors.White);
+                ed.Foreground            = new SolidColorBrush(Color.FromRgb(0x1E, 0x1E, 0x1E));
+                ed.LineNumbersForeground = new SolidColorBrush(Color.FromRgb(0xA0, 0xA0, 0xA0));
             }
+
+            return ed;
         }
 
-        // ── Event handlers ────────────────────────────────────────────────
+        // ══════════════════════════════════════════════════════════════════
+        // FILE LOADING
+        // ══════════════════════════════════════════════════════════════════
 
-        private void EyeToggleButton_Click(object sender, RoutedEventArgs e)
-        {
-            _secretsRevealed = !_secretsRevealed;
-            UpdateEyeButton();
-            RenderEnvDocument();
-        }
-
-        // ── Async load + render ───────────────────────────────────────────
-
-        private async Task LoadAndRenderAsync()
+        private async Task LoadAsync()
         {
             try
             {
                 var info = new FileInfo(_path);
-                if (info.Length > MaxFileSizeBytes)
+                if (info.Length > MaxBytes)
                 {
-                    ShowMessage($"File too large to preview ({info.Length / 1024:N0} KB). Limit is {MaxFileSizeBytes / 1024:N0} KB.");
+                    SetText($"[File too large: {info.Length / 1024:N0} KB. Limit is {MaxBytes / 1024:N0} KB]");
                     return;
                 }
 
-                string text = await Task.Run(() => ReadFile(_path));
+                string raw = await Task.Run(() => ReadFile(_path));
 
                 if (_fileType == DevFileType.EnvFile)
                 {
-                    _envLines = EnvMaskingService.Parse(text);
-                    RenderEnvDocument();
+                    _envLines = EnvMaskingService.Parse(raw);
+                    RenderEnv();
                 }
                 else
                 {
-                    await Task.Run(() =>
-                    {
-                        var rawLines = SplitLines(text, MaxRenderLines, out bool truncated);
-                        int total    = 0;
-                        foreach (var l in rawLines)
-                            total += ColorParser.ParseLine(l).Count;
+                    ApplySyntaxHighlighting();
 
-                        Dispatcher.Invoke(() =>
-                        {
-                            _totalColorCount = total;
-                            RenderColorDocument(rawLines, truncated);
-                        });
-                    });
+                    bool truncated;
+                    string text = Truncate(raw, MaxLines, out truncated);
+                    if (truncated)
+                        text += $"\n\n// [Preview truncated at {MaxLines} lines]";
+
+                    _editor.Text = text;
+
+                    await ScanAndDrawSwatchesAsync(text);
                 }
             }
             catch (Exception ex)
             {
-                ShowMessage($"Could not load file:\n{ex.Message}");
+                SetText($"Could not load file:\n{ex.Message}");
             }
         }
 
-        // ── Rendering ─────────────────────────────────────────────────────
+        // ── Syntax highlighting (AvalonEdit built-in definitions) ─────────
 
-        private void RenderColorDocument(IReadOnlyList<string> lines, bool truncated)
+        private void ApplySyntaxHighlighting()
         {
-            bool isDark = DetectDarkTheme();
-            var  doc    = PreviewRenderer.RenderWithSwatches(lines, isDark);
+            string name = null;
+            var ext = Path.GetExtension(_path).ToLowerInvariant();
 
-            if (truncated)
+            switch (_fileType)
             {
-                doc.Blocks.Add(new Paragraph(new Run($"[Preview truncated at {MaxRenderLines} lines]")
-                {
-                    Foreground = new SolidColorBrush(Color.FromRgb(0xF5, 0xC5, 0x18)),
-                    FontStyle  = FontStyles.Italic
-                }));
+                case DevFileType.Stylesheet:
+                    name = "CSS"; break;
+                case DevFileType.TailwindConfig:
+                    name = ext == ".ts" ? "TypeScript" : "JavaScript"; break;
+                case DevFileType.ThemeConfig:
+                    if (ext == ".json")     name = "Json";
+                    else if (ext == ".ts")  name = "TypeScript";
+                    else                    name = "JavaScript";
+                    break;
             }
 
-            _docViewer.Document = doc;
+            if (name == null) return;
 
-            if (_totalColorCount > 0)
+            try
             {
-                _swatchCountBadge.Visibility = Visibility.Visible;
-                _swatchCountLabel.Text       = $"{_totalColorCount} colour{(_totalColorCount == 1 ? "" : "s")}";
+                var def = HighlightingManager.Instance.GetDefinition(name);
+                if (def != null) _editor.SyntaxHighlighting = def;
             }
+            catch { /* best effort */ }
         }
 
-        private void RenderEnvDocument()
+        // ══════════════════════════════════════════════════════════════════
+        // COLOUR SWATCH RENDERING
+        // ══════════════════════════════════════════════════════════════════
+
+        private async Task ScanAndDrawSwatchesAsync(string text)
+        {
+            var swatches = new List<SwatchInfo>();
+            var lines    = text.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None);
+            int total    = 0;
+
+            bool isTailwind = _fileType == DevFileType.TailwindConfig
+                           || _fileType == DevFileType.ThemeConfig
+                           || _fileType == DevFileType.Stylesheet;
+
+            await Task.Run(() =>
+            {
+                for (int i = 0; i < lines.Length; i++)
+                {
+                    string line = lines[i];
+
+                    // CSS colour values (hex / rgb / rgba / hsl / hsla)
+                    foreach (var token in ColorParser.ParseLine(line))
+                    {
+                        if (!token.Color.HasValue) continue;
+                        swatches.Add(new SwatchInfo
+                        {
+                            Line       = i + 1,
+                            CharOffset = token.Index,
+                            Color      = token.Color.Value
+                        });
+                        total++;
+                    }
+
+                    // Tailwind utility class names + CSS variable form
+                    if (isTailwind)
+                    {
+                        foreach (var (idx, len, color, _) in TailwindColorMap.FindColors(line))
+                        {
+                            swatches.Add(new SwatchInfo
+                            {
+                                Line       = i + 1,
+                                CharOffset = idx,
+                                Color      = color
+                            });
+                            total++;
+                        }
+                    }
+                }
+            });
+
+            if (total == 0) return;
+
+            // Register renderer on UI thread
+            var renderer = new ColorSwatchRenderer(_editor, swatches);
+            _editor.TextArea.TextView.BackgroundRenderers.Add(renderer);
+            _editor.TextArea.TextView.InvalidateLayer(ICSharpCode.AvalonEdit.Rendering.KnownLayer.Text);
+
+            _swatchCount.Text       = $"  {total} colour{(total == 1 ? "" : "s")}";
+            _swatchBadge.Visibility = Visibility.Visible;
+        }
+
+        // ══════════════════════════════════════════════════════════════════
+        // .ENV RENDERING
+        // ══════════════════════════════════════════════════════════════════
+
+        private void RenderEnv()
         {
             if (_envLines == null) return;
-            bool isDark = DetectDarkTheme();
-            _docViewer.Document = BuildEnvDocument(_envLines, _secretsRevealed, isDark);
+
+            var sb = new StringBuilder();
+            foreach (var line in _envLines)
+                sb.AppendLine(line.DisplayText(_revealed));
+
+            _editor.Text = sb.ToString();
         }
 
-        private static FlowDocument BuildEnvDocument(IReadOnlyList<EnvLine> lines, bool revealed, bool isDark)
-        {
-            var doc = new FlowDocument
-            {
-                FontFamily            = new FontFamily("Cascadia Code, Consolas, Courier New, monospace"),
-                FontSize              = 13,
-                LineHeight            = 20,
-                PagePadding           = new Thickness(16, 12, 16, 12),
-                Background            = new SolidColorBrush(isDark ? Color.FromRgb(0x1E, 0x1E, 0x2E) : Color.FromRgb(0xFA, 0xFA, 0xFB)),
-                Foreground            = new SolidColorBrush(isDark ? Color.FromRgb(0xCD, 0xD6, 0xF4) : Color.FromRgb(0x1E, 0x1E, 0x2E)),
-                IsColumnWidthFlexible = false,
-                ColumnWidth           = double.MaxValue
-            };
-
-            foreach (var line in lines)
-            {
-                var para = new Paragraph { Margin = new Thickness(0), LineHeight = 20 };
-
-                if (!line.IsAssignment)
-                {
-                    var commentColor = isDark
-                        ? Color.FromRgb(0x6C, 0x70, 0x86)
-                        : Color.FromRgb(0x90, 0x94, 0xA5);
-                    para.Inlines.Add(new Run(line.Raw) { Foreground = new SolidColorBrush(commentColor) });
-                }
-                else
-                {
-                    var keyColor = isDark
-                        ? Color.FromRgb(0x89, 0xB4, 0xFA)
-                        : Color.FromRgb(0x19, 0x5F, 0xBB);
-
-                    var valueColor = revealed
-                        ? (isDark ? Color.FromRgb(0xA6, 0xE3, 0xA1) : Color.FromRgb(0x2E, 0x7D, 0x32))
-                        : (isDark ? Color.FromRgb(0x58, 0x5B, 0x70) : Color.FromRgb(0xAA, 0xAA, 0xBB));
-
-                    var eqColor = isDark
-                        ? Color.FromRgb(0xCD, 0xD6, 0xF4)
-                        : Color.FromRgb(0x50, 0x50, 0x60);
-
-                    string mask = revealed
-                        ? line.Value
-                        : new string('*', Math.Max(8, line.Value?.Length ?? 8));
-
-                    para.Inlines.Add(new Run(line.Key)  { Foreground = new SolidColorBrush(keyColor),   FontWeight = FontWeights.SemiBold });
-                    para.Inlines.Add(new Run("=")        { Foreground = new SolidColorBrush(eqColor) });
-                    para.Inlines.Add(new Run(mask)       { Foreground = new SolidColorBrush(valueColor) });
-                }
-
-                doc.Blocks.Add(para);
-            }
-
-            return doc;
-        }
-
-        // ── Utilities ─────────────────────────────────────────────────────
+        // ══════════════════════════════════════════════════════════════════
+        // UTILITIES
+        // ══════════════════════════════════════════════════════════════════
 
         private static string ReadFile(string path)
         {
-            using (var reader = new StreamReader(path, Encoding.UTF8, detectEncodingFromByteOrderMarks: true))
-                return reader.ReadToEnd();
+            using (var r = new StreamReader(path, Encoding.UTF8, detectEncodingFromByteOrderMarks: true))
+                return r.ReadToEnd();
         }
 
-        private static string[] SplitLines(string text, int maxLines, out bool truncated)
+        private static string Truncate(string text, int maxLines, out bool truncated)
         {
-            var all = text.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None);
-            if (all.Length <= maxLines) { truncated = false; return all; }
+            var lines = text.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None);
+            if (lines.Length <= maxLines) { truncated = false; return text; }
             truncated = true;
-            var result = new string[maxLines];
-            Array.Copy(all, result, maxLines);
-            return result;
+            return string.Join("\n", lines, 0, maxLines);
         }
 
-        private static bool DetectDarkTheme()
+        private void SetText(string msg)
         {
-            try
+            _editor.IsReadOnly = false;
+            _editor.Text       = msg;
+            _editor.IsReadOnly = true;
+        }
+
+        // ── Badge label / colours ─────────────────────────────────────────
+
+        private string GetBadgeText()
+        {
+            switch (_fileType)
             {
-                var bg  = SystemColors.WindowColor;
-                double lum = 0.299 * bg.R + 0.587 * bg.G + 0.114 * bg.B;
-                return lum < 128;
+                case DevFileType.TailwindConfig: return "TAILWIND";
+                case DevFileType.EnvFile:        return ".ENV";
+                default:
+                    return Path.GetExtension(_path).TrimStart('.').ToUpperInvariant();
             }
-            catch { return false; }
         }
 
-        private void ShowMessage(string message)
+        private (Color bg, Color fg) GetBadgeColors()
         {
-            var doc = new FlowDocument
+            switch (_fileType)
             {
-                FontFamily  = new FontFamily("Segoe UI, sans-serif"),
-                FontSize    = 14,
-                PagePadding = new Thickness(20)
-            };
-            doc.Blocks.Add(new Paragraph(new Run(message)
-            {
-                Foreground = new SolidColorBrush(Color.FromRgb(0xF3, 0x8B, 0xA8))
-            }));
-            _docViewer.Document = doc;
+                case DevFileType.Stylesheet:
+                    return _isDark
+                        ? (Color.FromRgb(0x1A, 0x3A, 0x5C), Color.FromRgb(0x89, 0xB4, 0xFA))
+                        : (Color.FromRgb(0xBB, 0xDE, 0xFF), Color.FromRgb(0x19, 0x5F, 0xBB));
+                case DevFileType.TailwindConfig:
+                    return _isDark
+                        ? (Color.FromRgb(0x08, 0x28, 0x22), Color.FromRgb(0x38, 0xBD, 0xF8))
+                        : (Color.FromRgb(0xB2, 0xEB, 0xF2), Color.FromRgb(0x00, 0x6A, 0x7A));
+                case DevFileType.EnvFile:
+                    return _isDark
+                        ? (Color.FromRgb(0x3A, 0x10, 0x10), Color.FromRgb(0xF3, 0x8B, 0xA8))
+                        : (Color.FromRgb(0xFF, 0xCC, 0xCC), Color.FromRgb(0xAA, 0x00, 0x00));
+                default:
+                    return _isDark
+                        ? (Color.FromRgb(0x2A, 0x2A, 0x3A), Color.FromRgb(0xCC, 0xCC, 0xDD))
+                        : (Color.FromRgb(0xE4, 0xE4, 0xF0), Color.FromRgb(0x33, 0x33, 0x55));
+            }
         }
     }
 }
