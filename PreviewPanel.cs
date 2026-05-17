@@ -1,20 +1,19 @@
 // ============================================================
 // QuickLook.Plugin.DevPowerTool — PreviewPanel.cs
 //
-// Rendering rules:
-//   • CSS/SCSS/SASS/JSON/JS/TS files:
-//       - NO toolbar (identical to TextViewer)
-//       - AvalonEdit fills 100% of the window
-//       - Colour swatches drawn via ColorSwatchRenderer
-//       - Small floating swatch count badge overlaid bottom-left
+// ALL file types:
+//   - NO toolbar — editor fills 100% of window
+//   - Identical to TextViewer look
 //
-//   • .env files:
-//       - Minimal single-line toolbar with toggle button
-//       - AvalonEdit fills the rest
-//       - Secrets masked by default
+// CSS/SCSS/SASS/JSON/JS/TS:
+//   - Plain text (no syntax colour)
+//   - Colour swatches via ColorSwatchRenderer
+//   - Small swatch count badge floating bottom-left
 //
-// AvalonEdit settings exactly match QuickLook's built-in TextViewer.
-// No Tailwind color detection.
+// .env files:
+//   - Secrets masked by default
+//   - iOS-style toggle switch floating bottom-right
+//   - Clicking toggle reveals/hides all secrets
 // ============================================================
 
 using System;
@@ -24,21 +23,15 @@ using System.Text;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Controls.Primitives;
+using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
+using System.Windows.Shapes;
 using ICSharpCode.AvalonEdit;
-using ICSharpCode.AvalonEdit.Highlighting;
 using QuickLook.Common.Helpers;
 
 namespace QuickLook.Plugin.DevPowerTool
 {
-    internal struct BadgeColors
-    {
-        public Color Bg;
-        public Color Fg;
-        public BadgeColors(Color bg, Color fg) { Bg = bg; Fg = fg; }
-    }
-
     public class PreviewPanel : UserControl
     {
         // ── Constants ─────────────────────────────────────────────────────
@@ -54,10 +47,26 @@ namespace QuickLook.Plugin.DevPowerTool
         private bool          _revealed = false;
 
         // ── Controls ──────────────────────────────────────────────────────
-        private TextEditor   _editor;
-        private TextBlock    _swatchCountText;
-        private Border       _swatchCountOverlay; // floating badge, not toolbar
-        private ToggleButton _envToggle;
+        private TextEditor _editor;
+
+        // Swatch count overlay (CSS files)
+        private TextBlock _swatchCountText;
+        private Border    _swatchCountOverlay;
+
+        // Toggle overlay (env files)
+        private Border    _toggleTrack;
+        private Ellipse   _toggleThumb;
+        private TextBlock _toggleLabel;
+        private bool      _toggleAnimating = false;
+
+        // ── Toggle colours ────────────────────────────────────────────────
+        private static readonly Color _trackOff = Color.FromRgb(0x78, 0x78, 0x80); // iOS grey
+        private static readonly Color _trackOn  = Color.FromRgb(0x34, 0xC7, 0x59); // iOS green
+        private const double TrackW  = 51;
+        private const double TrackH  = 31;
+        private const double ThumbSz = 27;
+        private const double ThumbOffX = 2;  // thumb left position when OFF
+        private const double ThumbOnX  = TrackW - ThumbSz - 2; // thumb left when ON
 
         // ── Constructor ───────────────────────────────────────────────────
 
@@ -77,180 +86,20 @@ namespace QuickLook.Plugin.DevPowerTool
 
         private void Build()
         {
-            if (_fileType == DevFileType.EnvFile)
-                BuildEnvLayout();
-            else
-                BuildEditorOnlyLayout();
-        }
-
-        /// <summary>
-        /// For CSS/config files: editor fills 100% of space, identical to
-        /// TextViewer. A small floating swatch-count badge sits bottom-left.
-        /// </summary>
-        private void BuildEditorOnlyLayout()
-        {
             _editor = BuildEditor();
 
-            // Floating swatch count badge — overlaid on top of editor
-            _swatchCountText = new TextBlock
-            {
-                FontFamily = new FontFamily("Segoe UI, sans-serif"),
-                FontSize   = 11,
-                Foreground = new SolidColorBrush(_isDark
-                    ? Color.FromRgb(0xA6, 0xE3, 0xA1)
-                    : Color.FromRgb(0x2E, 0x7D, 0x32))
-            };
-
-            _swatchCountOverlay = new Border
-            {
-                Child             = _swatchCountText,
-                Background        = new SolidColorBrush(_isDark
-                    ? Color.FromArgb(200, 20, 45, 20)
-                    : Color.FromArgb(200, 220, 245, 220)),
-                BorderBrush       = new SolidColorBrush(_isDark
-                    ? Color.FromRgb(0x2E, 0x5C, 0x2E)
-                    : Color.FromRgb(0x88, 0xCC, 0x88)),
-                BorderThickness   = new Thickness(1),
-                CornerRadius      = new CornerRadius(4),
-                Padding           = new Thickness(8, 3, 8, 3),
-                HorizontalAlignment = HorizontalAlignment.Left,
-                VerticalAlignment   = VerticalAlignment.Bottom,
-                Margin            = new Thickness(8, 0, 0, 8),
-                Visibility        = Visibility.Collapsed
-            };
-
-            // Grid: editor fills everything, badge is overlaid
             var grid = new Grid();
             grid.Children.Add(_editor);
-            grid.Children.Add(_swatchCountOverlay);
+
+            if (_fileType == DevFileType.EnvFile)
+                grid.Children.Add(BuildToggleOverlay());
+            else
+                grid.Children.Add(BuildSwatchOverlay());
 
             Content = grid;
         }
 
-        /// <summary>
-        /// For .env files: slim toolbar on top, editor below.
-        /// </summary>
-        private void BuildEnvLayout()
-        {
-            var root = new Grid();
-            root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(34) });
-            root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-
-            var toolbar = BuildEnvToolbar();
-            Grid.SetRow(toolbar, 0);
-            root.Children.Add(toolbar);
-
-            _editor = BuildEditor();
-            Grid.SetRow(_editor, 1);
-            root.Children.Add(_editor);
-
-            Content = root;
-        }
-
-        // ── Env toolbar ───────────────────────────────────────────────────
-
-        private Border BuildEnvToolbar()
-        {
-            var bg     = _isDark ? Color.FromRgb(0x2D, 0x2D, 0x2D) : Color.FromRgb(0xF0, 0xF0, 0xF0);
-            var border = _isDark ? Color.FromRgb(0x45, 0x45, 0x45) : Color.FromRgb(0xCC, 0xCC, 0xCC);
-
-            var toolbar = new Border
-            {
-                Background      = new SolidColorBrush(bg),
-                BorderBrush     = new SolidColorBrush(border),
-                BorderThickness = new Thickness(0, 0, 0, 1),
-                Padding         = new Thickness(8, 0, 8, 0)
-            };
-
-            var grid = new Grid();
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            toolbar.Child = grid;
-
-            // Left: .ENV badge
-            var left = new StackPanel
-            {
-                Orientation       = Orientation.Horizontal,
-                VerticalAlignment = VerticalAlignment.Center
-            };
-            left.Children.Add(MakeBadge(".ENV", new BadgeColors(
-                _isDark ? Color.FromRgb(0x3A, 0x10, 0x10) : Color.FromRgb(0xFF, 0xCC, 0xCC),
-                _isDark ? Color.FromRgb(0xF3, 0x8B, 0xA8) : Color.FromRgb(0xAA, 0x00, 0x00))));
-            Grid.SetColumn(left, 0);
-            grid.Children.Add(left);
-
-            // Right: toggle button
-            _envToggle = BuildToggle();
-            _envToggle.Checked   += (s, e) => { _revealed = true;  RenderEnv(); };
-            _envToggle.Unchecked += (s, e) => { _revealed = false; RenderEnv(); };
-
-            var right = new StackPanel
-            {
-                Orientation       = Orientation.Horizontal,
-                VerticalAlignment = VerticalAlignment.Center
-            };
-            right.Children.Add(_envToggle);
-            Grid.SetColumn(right, 1);
-            grid.Children.Add(right);
-
-            return toolbar;
-        }
-
-        private ToggleButton BuildToggle()
-        {
-            var label = new TextBlock
-            {
-                Text              = "Show secrets",
-                FontFamily        = new FontFamily("Segoe UI, sans-serif"),
-                FontSize          = 11,
-                VerticalAlignment = VerticalAlignment.Center,
-                Foreground        = new SolidColorBrush(_isDark
-                    ? Color.FromRgb(0xCC, 0xCC, 0xCC)
-                    : Color.FromRgb(0x22, 0x22, 0x22))
-            };
-
-            var toggle = new ToggleButton
-            {
-                Content           = label,
-                IsChecked         = false,
-                VerticalAlignment = VerticalAlignment.Center,
-                Padding           = new Thickness(10, 3, 10, 3),
-                Cursor            = System.Windows.Input.Cursors.Hand,
-                Background        = new SolidColorBrush(_isDark
-                    ? Color.FromRgb(0x3A, 0x3A, 0x3A)
-                    : Color.FromRgb(0xE2, 0xE2, 0xE2)),
-                BorderBrush       = new SolidColorBrush(_isDark
-                    ? Color.FromRgb(0x60, 0x60, 0x60)
-                    : Color.FromRgb(0xAA, 0xAA, 0xAA)),
-                BorderThickness   = new Thickness(1)
-            };
-
-            toggle.Checked   += (s, e) => label.Text = "Hide secrets";
-            toggle.Unchecked += (s, e) => label.Text = "Show secrets";
-
-            return toggle;
-        }
-
-        private Border MakeBadge(string text, BadgeColors colors)
-        {
-            return new Border
-            {
-                Background        = new SolidColorBrush(colors.Bg),
-                CornerRadius      = new CornerRadius(4),
-                Padding           = new Thickness(6, 2, 6, 2),
-                VerticalAlignment = VerticalAlignment.Center,
-                Child             = new TextBlock
-                {
-                    Text       = text,
-                    FontFamily = new FontFamily("Cascadia Code, Consolas, monospace"),
-                    FontSize   = 10,
-                    FontWeight = FontWeights.SemiBold,
-                    Foreground = new SolidColorBrush(colors.Fg)
-                }
-            };
-        }
-
-        // ── AvalonEdit — IDENTICAL to TextViewer settings ──────────────────
+        // ── AvalonEdit — identical to TextViewer ──────────────────────────
 
         private TextEditor BuildEditor()
         {
@@ -259,7 +108,7 @@ namespace QuickLook.Plugin.DevPowerTool
                 IsReadOnly                    = true,
                 ShowLineNumbers               = true,
                 FontFamily                    = new FontFamily("Cascadia Code, Consolas, Courier New, monospace"),
-                FontSize                      = 14,   // same as TextViewer
+                FontSize                      = 14,
                 WordWrap                      = false,
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
                 VerticalScrollBarVisibility   = ScrollBarVisibility.Auto,
@@ -273,7 +122,6 @@ namespace QuickLook.Plugin.DevPowerTool
                 }
             };
 
-            // Exact colours TextViewer uses
             if (_isDark)
             {
                 ed.Background            = new SolidColorBrush(Color.FromRgb(0x1E, 0x1E, 0x1E));
@@ -288,6 +136,170 @@ namespace QuickLook.Plugin.DevPowerTool
             }
 
             return ed;
+        }
+
+        // ── Swatch count floating badge (CSS files) ───────────────────────
+
+        private Border BuildSwatchOverlay()
+        {
+            _swatchCountText = new TextBlock
+            {
+                FontFamily = new FontFamily("Segoe UI, sans-serif"),
+                FontSize   = 11,
+                Foreground = new SolidColorBrush(_isDark
+                    ? Color.FromRgb(0xA6, 0xE3, 0xA1)
+                    : Color.FromRgb(0x2E, 0x7D, 0x32))
+            };
+
+            _swatchCountOverlay = new Border
+            {
+                Child               = _swatchCountText,
+                Background          = new SolidColorBrush(_isDark
+                    ? Color.FromArgb(210, 20, 45, 20)
+                    : Color.FromArgb(210, 220, 245, 220)),
+                BorderBrush         = new SolidColorBrush(_isDark
+                    ? Color.FromRgb(0x2E, 0x5C, 0x2E)
+                    : Color.FromRgb(0x88, 0xCC, 0x88)),
+                BorderThickness     = new Thickness(1),
+                CornerRadius        = new CornerRadius(4),
+                Padding             = new Thickness(8, 3, 8, 3),
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment   = VerticalAlignment.Bottom,
+                Margin              = new Thickness(52, 0, 0, 8),
+                Visibility          = Visibility.Collapsed
+            };
+
+            return _swatchCountOverlay;
+        }
+
+        // ── iOS-style toggle overlay (env files) ──────────────────────────
+
+        private UIElement BuildToggleOverlay()
+        {
+            // Track (the pill background)
+            _toggleTrack = new Border
+            {
+                Width             = TrackW,
+                Height            = TrackH,
+                CornerRadius      = new CornerRadius(TrackH / 2),
+                Background        = new SolidColorBrush(_trackOff),
+                Cursor            = Cursors.Hand
+            };
+
+            // Thumb (the white circle)
+            _toggleThumb = new Ellipse
+            {
+                Width             = ThumbSz,
+                Height            = ThumbSz,
+                Fill              = new SolidColorBrush(Colors.White),
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment   = VerticalAlignment.Center,
+                Margin            = new Thickness(ThumbOffX, 0, 0, 0),
+                Effect            = new System.Windows.Media.Effects.DropShadowEffect
+                {
+                    Color     = Colors.Black,
+                    Opacity   = 0.3,
+                    BlurRadius = 4,
+                    ShadowDepth = 1
+                }
+            };
+
+            // Label below toggle
+            _toggleLabel = new TextBlock
+            {
+                Text                = "Show secrets",
+                FontFamily          = new FontFamily("Segoe UI, sans-serif"),
+                FontSize            = 10,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Foreground          = new SolidColorBrush(_isDark
+                    ? Color.FromRgb(0x99, 0x99, 0x99)
+                    : Color.FromRgb(0x66, 0x66, 0x66)),
+                Margin              = new Thickness(0, 4, 0, 0)
+            };
+
+            // Stack: toggle pill on top, label below
+            var stack = new StackPanel
+            {
+                Orientation         = Orientation.Vertical,
+                HorizontalAlignment = HorizontalAlignment.Center
+            };
+
+            // Overlay the thumb on the track using a Grid
+            var trackGrid = new Grid
+            {
+                Width  = TrackW,
+                Height = TrackH
+            };
+            trackGrid.Children.Add(_toggleTrack);
+            trackGrid.Children.Add(_toggleThumb);
+
+            stack.Children.Add(trackGrid);
+            stack.Children.Add(_toggleLabel);
+
+            // Click handler on the whole stack
+            stack.MouseLeftButtonUp += (s, e) => ToggleSecrets();
+            _toggleTrack.MouseLeftButtonUp += (s, e) => ToggleSecrets();
+
+            // Position: bottom-right corner with margin
+            var container = new Border
+            {
+                Child               = stack,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                VerticalAlignment   = VerticalAlignment.Bottom,
+                Margin              = new Thickness(0, 0, 16, 16),
+                Background          = new SolidColorBrush(_isDark
+                    ? Color.FromArgb(180, 30, 30, 30)
+                    : Color.FromArgb(180, 240, 240, 240)),
+                CornerRadius        = new CornerRadius(10),
+                Padding             = new Thickness(10, 8, 10, 8)
+            };
+
+            return container;
+        }
+
+        private void ToggleSecrets()
+        {
+            if (_toggleAnimating) return;
+            _revealed = !_revealed;
+
+            AnimateToggle(_revealed);
+            _toggleLabel.Text = _revealed ? "Hide secrets" : "Show secrets";
+            RenderEnv();
+        }
+
+        private void AnimateToggle(bool on)
+        {
+            _toggleAnimating = true;
+
+            // Animate track colour
+            var trackAnim = new ColorAnimation
+            {
+                To             = on ? _trackOn : _trackOff,
+                Duration       = TimeSpan.FromMilliseconds(200),
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseInOut }
+            };
+            var trackBrush = new SolidColorBrush(on ? _trackOff : _trackOn);
+            _toggleTrack.Background = trackBrush;
+            trackBrush.BeginAnimation(SolidColorBrush.ColorProperty, trackAnim);
+
+            // Animate thumb position via margin
+            double fromX = on ? ThumbOffX : ThumbOnX;
+            double toX   = on ? ThumbOnX  : ThumbOffX;
+            _toggleThumb.Margin = new Thickness(fromX, 0, 0, 0);
+
+            var thumbAnim = new ThicknessAnimation
+            {
+                From           = new Thickness(fromX, 0, 0, 0),
+                To             = new Thickness(toX,   0, 0, 0),
+                Duration       = TimeSpan.FromMilliseconds(200),
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseInOut }
+            };
+            thumbAnim.Completed += (s, e) =>
+            {
+                _toggleThumb.Margin  = new Thickness(toX, 0, 0, 0);
+                _toggleAnimating     = false;
+            };
+            _toggleThumb.BeginAnimation(MarginProperty, thumbAnim);
         }
 
         // ══════════════════════════════════════════════════════════════════
@@ -315,8 +327,6 @@ namespace QuickLook.Plugin.DevPowerTool
                 }
                 else
                 {
-                    ApplySyntaxHighlighting();
-
                     bool truncated;
                     string text = Truncate(raw, MaxLines, out truncated);
                     if (truncated)
@@ -330,35 +340,6 @@ namespace QuickLook.Plugin.DevPowerTool
             {
                 SetText("Could not load file:\n" + ex.Message);
             }
-        }
-
-        // ── Syntax highlighting ───────────────────────────────────────────
-
-        private void ApplySyntaxHighlighting()
-        {
-            string name = null;
-            var ext = Path.GetExtension(_path).ToLowerInvariant();
-
-            switch (_fileType)
-            {
-                case DevFileType.Stylesheet:
-                    name = "CSS"; break;
-                case DevFileType.TailwindConfig:
-                    name = ext == ".ts" ? "TypeScript" : "JavaScript"; break;
-                case DevFileType.ThemeConfig:
-                    if (ext == ".json")    name = "Json";
-                    else if (ext == ".ts") name = "TypeScript";
-                    else                   name = "JavaScript";
-                    break;
-            }
-
-            if (name == null) return;
-            try
-            {
-                var def = HighlightingManager.Instance.GetDefinition(name);
-                if (def != null) _editor.SyntaxHighlighting = def;
-            }
-            catch { }
         }
 
         // ══════════════════════════════════════════════════════════════════
@@ -393,9 +374,10 @@ namespace QuickLook.Plugin.DevPowerTool
 
             var renderer = new ColorSwatchRenderer(_editor, swatches);
             _editor.TextArea.TextView.BackgroundRenderers.Add(renderer);
-            _editor.TextArea.TextView.InvalidateLayer(ICSharpCode.AvalonEdit.Rendering.KnownLayer.Text);
+            _editor.TextArea.TextView.InvalidateLayer(
+                ICSharpCode.AvalonEdit.Rendering.KnownLayer.Text);
 
-            _swatchCountText.Text         = string.Format("  {0} colour{1}", total, total == 1 ? "" : "s");
+            _swatchCountText.Text          = string.Format("  {0} colour{1}", total, total == 1 ? "" : "s");
             _swatchCountOverlay.Visibility = Visibility.Visible;
         }
 
