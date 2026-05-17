@@ -62,11 +62,11 @@ namespace QuickLook.Plugin.DevPowerTool
         // ── Toggle colours ────────────────────────────────────────────────
         private static readonly Color _trackOff = Color.FromRgb(0x78, 0x78, 0x80); // iOS grey
         private static readonly Color _trackOn  = Color.FromRgb(0x34, 0xC7, 0x59); // iOS green
-        private const double TrackW  = 51;
-        private const double TrackH  = 31;
-        private const double ThumbSz = 27;
-        private const double ThumbOffX = 2;  // thumb left position when OFF
-        private const double ThumbOnX  = TrackW - ThumbSz - 2; // thumb left when ON
+        private const double TrackW    = 38;
+        private const double TrackH    = 22;
+        private const double ThumbSz   = 18;
+        private const double ThumbOffX = 2;
+        private const double ThumbOnX  = TrackW - ThumbSz - 2;
 
         // ── Constructor ───────────────────────────────────────────────────
 
@@ -240,18 +240,18 @@ namespace QuickLook.Plugin.DevPowerTool
             stack.MouseLeftButtonUp += (s, e) => ToggleSecrets();
             _toggleTrack.MouseLeftButtonUp += (s, e) => ToggleSecrets();
 
-            // Position: bottom-right corner with margin
+            // Position: top-right corner with margin
             var container = new Border
             {
                 Child               = stack,
                 HorizontalAlignment = HorizontalAlignment.Right,
-                VerticalAlignment   = VerticalAlignment.Bottom,
-                Margin              = new Thickness(0, 0, 16, 16),
+                VerticalAlignment   = VerticalAlignment.Top,
+                Margin              = new Thickness(0, 10, 16, 0),
                 Background          = new SolidColorBrush(_isDark
                     ? Color.FromArgb(180, 30, 30, 30)
                     : Color.FromArgb(180, 240, 240, 240)),
-                CornerRadius        = new CornerRadius(10),
-                Padding             = new Thickness(10, 8, 10, 8)
+                CornerRadius        = new CornerRadius(8),
+                Padding             = new Thickness(8, 6, 8, 6)
             };
 
             return container;
@@ -361,9 +361,10 @@ namespace QuickLook.Plugin.DevPowerTool
                         if (!token.Color.HasValue) continue;
                         swatches.Add(new SwatchInfo
                         {
-                            Line       = i + 1,
-                            CharOffset = token.Index,
-                            Color      = token.Color.Value
+                            Line        = i + 1,
+                            CharOffset  = token.Index,
+                            TokenLength = token.Raw.Length,
+                            Color       = token.Color.Value
                         });
                         total++;
                     }
