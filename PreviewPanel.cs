@@ -1,17 +1,8 @@
 // ============================================================
 // QuickLook.Plugin.DevPowerTool — PreviewPanel.cs
 //
-// Main preview control. Uses AvalonEdit (ICSharpCode.AvalonEdit)
-// exactly as QuickLook's built-in TextViewer does:
-//   • Same TextEditor control
-//   • Same font / line numbers / scrollbars
-//   • Same OSThemeHelper for dark/light detection
-//   • Same syntax highlighting via HighlightingManager
-//
-// Added on top of TextViewer:
-//   • Colour swatches for CSS/SCSS/SASS/JSON/JS/TS colour values
-//   • Colour swatches for Tailwind v3+v4 utility class names
-//   • .env privacy masking with a clean on/off ToggleButton
+// Uses AvalonEdit (ICSharpCode.AvalonEdit) exactly as QuickLook's
+// built-in TextViewer does. No C# tuples — net462 compatible.
 // ============================================================
 
 using System;
@@ -29,11 +20,19 @@ using QuickLook.Common.Helpers;
 
 namespace QuickLook.Plugin.DevPowerTool
 {
+    // ── Simple struct to avoid ValueTuple (not available in net462) ────────
+    internal struct BadgeColors
+    {
+        public Color Bg;
+        public Color Fg;
+        public BadgeColors(Color bg, Color fg) { Bg = bg; Fg = fg; }
+    }
+
     public class PreviewPanel : UserControl
     {
         // ── Constants ─────────────────────────────────────────────────────
-        private const long MaxBytes    = 2 * 1024 * 1024; // 2 MB
-        private const int  MaxLines    = 5_000;
+        private const long MaxBytes = 2 * 1024 * 1024;
+        private const int  MaxLines = 5_000;
 
         // ── State ─────────────────────────────────────────────────────────
         private readonly string      _path;
@@ -71,8 +70,9 @@ namespace QuickLook.Plugin.DevPowerTool
             root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(34) });
             root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
 
-            Grid.SetRow(BuildToolbar(), 0);
-            root.Children.Add(BuildToolbar());
+            var toolbar = BuildToolbar();
+            Grid.SetRow(toolbar, 0);
+            root.Children.Add(toolbar);
 
             _editor = BuildEditor();
             Grid.SetRow(_editor, 1);
@@ -85,7 +85,6 @@ namespace QuickLook.Plugin.DevPowerTool
 
         private Border BuildToolbar()
         {
-            // Colours exactly matching QuickLook's own toolbar chrome
             var bg     = _isDark ? Color.FromRgb(0x2D, 0x2D, 0x2D) : Color.FromRgb(0xF0, 0xF0, 0xF0);
             var border = _isDark ? Color.FromRgb(0x45, 0x45, 0x45) : Color.FromRgb(0xCC, 0xCC, 0xCC);
 
@@ -106,11 +105,12 @@ namespace QuickLook.Plugin.DevPowerTool
             var left = new StackPanel
             {
                 Orientation       = Orientation.Horizontal,
-                VerticalAlignment = VerticalAlignment.Center,
-                Gap               = 6
+                VerticalAlignment = VerticalAlignment.Center
             };
+            left.Children.Add(new Border { Width = 0 }); // spacer
 
-            var badge = MakeBadge(GetBadgeText(), GetBadgeColors());
+            var colors = GetBadgeColors();
+            var badge  = MakeBadge(GetBadgeText(), colors);
             left.Children.Add(badge);
 
             _swatchCount = new TextBlock
@@ -118,6 +118,7 @@ namespace QuickLook.Plugin.DevPowerTool
                 FontFamily        = new FontFamily("Segoe UI, sans-serif"),
                 FontSize          = 11,
                 VerticalAlignment = VerticalAlignment.Center,
+                Margin            = new Thickness(6, 0, 0, 0),
                 Foreground        = new SolidColorBrush(_isDark
                     ? Color.FromRgb(0xA6, 0xE3, 0xA1)
                     : Color.FromRgb(0x2E, 0x7D, 0x32))
@@ -127,6 +128,7 @@ namespace QuickLook.Plugin.DevPowerTool
                 Padding           = new Thickness(6, 2, 6, 2),
                 CornerRadius      = new CornerRadius(4),
                 VerticalAlignment = VerticalAlignment.Center,
+                Margin            = new Thickness(6, 0, 0, 0),
                 Background        = new SolidColorBrush(_isDark
                     ? Color.FromRgb(0x1E, 0x35, 0x1E)
                     : Color.FromRgb(0xE8, 0xF5, 0xE9)),
@@ -159,12 +161,11 @@ namespace QuickLook.Plugin.DevPowerTool
         }
 
         /// <summary>
-        /// Builds a native-feeling WPF ToggleButton that looks like a
-        /// proper on/off switch — no emoji, no icon corruption.
+        /// Clean native ToggleButton — no emoji, simple text label that
+        /// switches between "Show secrets" and "Hide secrets".
         /// </summary>
         private ToggleButton BuildToggle()
         {
-            // Label text changes on check/uncheck via event, set after construction
             var label = new TextBlock
             {
                 Text              = "Show secrets",
@@ -173,7 +174,7 @@ namespace QuickLook.Plugin.DevPowerTool
                 VerticalAlignment = VerticalAlignment.Center,
                 Foreground        = new SolidColorBrush(_isDark
                     ? Color.FromRgb(0xCC, 0xCC, 0xCC)
-                    : Color.FromRgb(0x33, 0x33, 0x33))
+                    : Color.FromRgb(0x22, 0x22, 0x22))
             };
 
             var toggle = new ToggleButton
@@ -181,7 +182,7 @@ namespace QuickLook.Plugin.DevPowerTool
                 Content           = label,
                 IsChecked         = false,
                 VerticalAlignment = VerticalAlignment.Center,
-                Padding           = new Thickness(8, 3, 8, 3),
+                Padding           = new Thickness(10, 3, 10, 3),
                 FontSize          = 11,
                 Cursor            = System.Windows.Input.Cursors.Hand,
                 Background        = new SolidColorBrush(_isDark
@@ -193,18 +194,17 @@ namespace QuickLook.Plugin.DevPowerTool
                 BorderThickness   = new Thickness(1)
             };
 
-            // Update label text when state changes
             toggle.Checked   += (s, e) => label.Text = "Hide secrets";
             toggle.Unchecked += (s, e) => label.Text = "Show secrets";
 
             return toggle;
         }
 
-        private Border MakeBadge(string text, (Color bg, Color fg) colors)
+        private Border MakeBadge(string text, BadgeColors colors)
         {
             return new Border
             {
-                Background        = new SolidColorBrush(colors.bg),
+                Background        = new SolidColorBrush(colors.Bg),
                 CornerRadius      = new CornerRadius(4),
                 Padding           = new Thickness(6, 2, 6, 2),
                 VerticalAlignment = VerticalAlignment.Center,
@@ -214,12 +214,12 @@ namespace QuickLook.Plugin.DevPowerTool
                     FontFamily = new FontFamily("Cascadia Code, Consolas, monospace"),
                     FontSize   = 10,
                     FontWeight = FontWeights.SemiBold,
-                    Foreground = new SolidColorBrush(colors.fg)
+                    Foreground = new SolidColorBrush(colors.Fg)
                 }
             };
         }
 
-        // ── AvalonEdit TextEditor — identical settings to TextViewer ──────
+        // ── AvalonEdit — identical settings to TextViewer ─────────────────
 
         private TextEditor BuildEditor()
         {
@@ -242,7 +242,7 @@ namespace QuickLook.Plugin.DevPowerTool
                 }
             };
 
-            // Theme — matches what TextViewer sets
+            // Exact same colours TextViewer uses
             if (_isDark)
             {
                 ed.Background            = new SolidColorBrush(Color.FromRgb(0x1E, 0x1E, 0x1E));
@@ -270,7 +270,8 @@ namespace QuickLook.Plugin.DevPowerTool
                 var info = new FileInfo(_path);
                 if (info.Length > MaxBytes)
                 {
-                    SetText($"[File too large: {info.Length / 1024:N0} KB. Limit is {MaxBytes / 1024:N0} KB]");
+                    SetText(string.Format("[File too large: {0:N0} KB. Limit is {1:N0} KB]",
+                        info.Length / 1024, MaxBytes / 1024));
                     return;
                 }
 
@@ -288,7 +289,7 @@ namespace QuickLook.Plugin.DevPowerTool
                     bool truncated;
                     string text = Truncate(raw, MaxLines, out truncated);
                     if (truncated)
-                        text += $"\n\n// [Preview truncated at {MaxLines} lines]";
+                        text += string.Format("\n\n// [Preview truncated at {0} lines]", MaxLines);
 
                     _editor.Text = text;
 
@@ -297,11 +298,11 @@ namespace QuickLook.Plugin.DevPowerTool
             }
             catch (Exception ex)
             {
-                SetText($"Could not load file:\n{ex.Message}");
+                SetText("Could not load file:\n" + ex.Message);
             }
         }
 
-        // ── Syntax highlighting (AvalonEdit built-in definitions) ─────────
+        // ── Syntax highlighting ───────────────────────────────────────────
 
         private void ApplySyntaxHighlighting()
         {
@@ -311,13 +312,15 @@ namespace QuickLook.Plugin.DevPowerTool
             switch (_fileType)
             {
                 case DevFileType.Stylesheet:
-                    name = "CSS"; break;
+                    name = "CSS";
+                    break;
                 case DevFileType.TailwindConfig:
-                    name = ext == ".ts" ? "TypeScript" : "JavaScript"; break;
+                    name = ext == ".ts" ? "TypeScript" : "JavaScript";
+                    break;
                 case DevFileType.ThemeConfig:
-                    if (ext == ".json")     name = "Json";
-                    else if (ext == ".ts")  name = "TypeScript";
-                    else                    name = "JavaScript";
+                    if (ext == ".json")    name = "Json";
+                    else if (ext == ".ts") name = "TypeScript";
+                    else                   name = "JavaScript";
                     break;
             }
 
@@ -341,9 +344,9 @@ namespace QuickLook.Plugin.DevPowerTool
             var lines    = text.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None);
             int total    = 0;
 
-            bool isTailwind = _fileType == DevFileType.TailwindConfig
-                           || _fileType == DevFileType.ThemeConfig
-                           || _fileType == DevFileType.Stylesheet;
+            bool scanTailwind = _fileType == DevFileType.TailwindConfig
+                             || _fileType == DevFileType.ThemeConfig
+                             || _fileType == DevFileType.Stylesheet;
 
             await Task.Run(() =>
             {
@@ -351,7 +354,7 @@ namespace QuickLook.Plugin.DevPowerTool
                 {
                     string line = lines[i];
 
-                    // CSS colour values (hex / rgb / rgba / hsl / hsla)
+                    // CSS colour values
                     foreach (var token in ColorParser.ParseLine(line))
                     {
                         if (!token.Color.HasValue) continue;
@@ -364,16 +367,16 @@ namespace QuickLook.Plugin.DevPowerTool
                         total++;
                     }
 
-                    // Tailwind utility class names + CSS variable form
-                    if (isTailwind)
+                    // Tailwind utility class names
+                    if (scanTailwind)
                     {
-                        foreach (var (idx, len, color, _) in TailwindColorMap.FindColors(line))
+                        foreach (var match in TailwindColorMap.FindColors(line))
                         {
                             swatches.Add(new SwatchInfo
                             {
                                 Line       = i + 1,
-                                CharOffset = idx,
-                                Color      = color
+                                CharOffset = match.Index,
+                                Color      = match.Color
                             });
                             total++;
                         }
@@ -383,12 +386,11 @@ namespace QuickLook.Plugin.DevPowerTool
 
             if (total == 0) return;
 
-            // Register renderer on UI thread
             var renderer = new ColorSwatchRenderer(_editor, swatches);
             _editor.TextArea.TextView.BackgroundRenderers.Add(renderer);
             _editor.TextArea.TextView.InvalidateLayer(ICSharpCode.AvalonEdit.Rendering.KnownLayer.Text);
 
-            _swatchCount.Text       = $"  {total} colour{(total == 1 ? "" : "s")}";
+            _swatchCount.Text       = string.Format("  {0} colour{1}", total, total == 1 ? "" : "s");
             _swatchBadge.Visibility = Visibility.Visible;
         }
 
@@ -432,7 +434,7 @@ namespace QuickLook.Plugin.DevPowerTool
             _editor.IsReadOnly = true;
         }
 
-        // ── Badge label / colours ─────────────────────────────────────────
+        // ── Badge helpers ─────────────────────────────────────────────────
 
         private string GetBadgeText()
         {
@@ -445,26 +447,26 @@ namespace QuickLook.Plugin.DevPowerTool
             }
         }
 
-        private (Color bg, Color fg) GetBadgeColors()
+        private BadgeColors GetBadgeColors()
         {
             switch (_fileType)
             {
                 case DevFileType.Stylesheet:
                     return _isDark
-                        ? (Color.FromRgb(0x1A, 0x3A, 0x5C), Color.FromRgb(0x89, 0xB4, 0xFA))
-                        : (Color.FromRgb(0xBB, 0xDE, 0xFF), Color.FromRgb(0x19, 0x5F, 0xBB));
+                        ? new BadgeColors(Color.FromRgb(0x1A, 0x3A, 0x5C), Color.FromRgb(0x89, 0xB4, 0xFA))
+                        : new BadgeColors(Color.FromRgb(0xBB, 0xDE, 0xFF), Color.FromRgb(0x19, 0x5F, 0xBB));
                 case DevFileType.TailwindConfig:
                     return _isDark
-                        ? (Color.FromRgb(0x08, 0x28, 0x22), Color.FromRgb(0x38, 0xBD, 0xF8))
-                        : (Color.FromRgb(0xB2, 0xEB, 0xF2), Color.FromRgb(0x00, 0x6A, 0x7A));
+                        ? new BadgeColors(Color.FromRgb(0x08, 0x28, 0x22), Color.FromRgb(0x38, 0xBD, 0xF8))
+                        : new BadgeColors(Color.FromRgb(0xB2, 0xEB, 0xF2), Color.FromRgb(0x00, 0x6A, 0x7A));
                 case DevFileType.EnvFile:
                     return _isDark
-                        ? (Color.FromRgb(0x3A, 0x10, 0x10), Color.FromRgb(0xF3, 0x8B, 0xA8))
-                        : (Color.FromRgb(0xFF, 0xCC, 0xCC), Color.FromRgb(0xAA, 0x00, 0x00));
+                        ? new BadgeColors(Color.FromRgb(0x3A, 0x10, 0x10), Color.FromRgb(0xF3, 0x8B, 0xA8))
+                        : new BadgeColors(Color.FromRgb(0xFF, 0xCC, 0xCC), Color.FromRgb(0xAA, 0x00, 0x00));
                 default:
                     return _isDark
-                        ? (Color.FromRgb(0x2A, 0x2A, 0x3A), Color.FromRgb(0xCC, 0xCC, 0xDD))
-                        : (Color.FromRgb(0xE4, 0xE4, 0xF0), Color.FromRgb(0x33, 0x33, 0x55));
+                        ? new BadgeColors(Color.FromRgb(0x2A, 0x2A, 0x3A), Color.FromRgb(0xCC, 0xCC, 0xDD))
+                        : new BadgeColors(Color.FromRgb(0xE4, 0xE4, 0xF0), Color.FromRgb(0x33, 0x33, 0x55));
             }
         }
     }
