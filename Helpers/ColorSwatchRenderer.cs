@@ -20,9 +20,9 @@ namespace QuickLook.Plugin.DevPowerTool
 {
     public sealed class SwatchInfo
     {
-        public int   Line;
-        public int   CharOffset;
-        public int   TokenLength;
+        public int   Line;        // 1-based document line number
+        public int   CharOffset;  // character index within the line where token starts
+        public int   TokenLength; // length of the colour token text
         public Color Color;
     }
 
@@ -62,13 +62,19 @@ namespace QuickLook.Plugin.DevPowerTool
                 int tokLen   = s.TokenLength > 0 ? s.TokenLength : 1;
                 int tokEnd   = tokStart + tokLen;
 
-                if (tokStart >= docLine.EndOffset) continue;
-                if (tokEnd   >  docLine.EndOffset) tokEnd = docLine.EndOffset;
+                // Use the actual token as the segment so we get the correct X position
+                int tokenStart  = docLine.Offset + s.CharOffset;
+                int tokenEnd    = tokenStart + (s.TokenLength > 0 ? s.TokenLength : 1);
+
+                // Clamp to line bounds
+                if (tokenStart >= docLine.EndOffset) continue;
+                if (tokenEnd   >  docLine.EndOffset)
+                    tokenEnd = docLine.EndOffset;
 
                 var seg = new ICSharpCode.AvalonEdit.Document.TextSegment
                 {
-                    StartOffset = tokStart,
-                    EndOffset   = tokEnd
+                    StartOffset = tokenStart,
+                    EndOffset   = tokenEnd
                 };
 
                 // GetRectsForSegment returns rects in visual coordinates
