@@ -1,7 +1,14 @@
 // ============================================================
-// QuickLook.Plugin.DevPowerTool — EnvMaskingService.cs
+// QuickLook.Plugin.DevPowerTool — Helpers/EnvMaskingService.cs
+//
 // Parses .env files and provides masked / revealed line views.
 // Never touches the original file on disk.
+//
+// Masking rules:
+//   - Active assignments:   KEY=value       → KEY=********
+//   - Commented assignments: # KEY=value    → # KEY=********
+//   - Blank lines / pure comments (no =)   → shown as-is
+//   - export KEY=value                      → export KEY=********
 // ============================================================
 
 using System;
@@ -10,56 +17,52 @@ using System.Text.RegularExpressions;
 
 namespace QuickLook.Plugin.DevPowerTool
 {
-    /// <summary>
-    /// Represents one parsed line from an .env file.
-    /// </summary>
     public sealed class EnvLine
     {
         /// <summary>The original raw text of the line.</summary>
         public string Raw { get; set; }
 
+        /// <summary>True when this line contains a KEY=VALUE that should be masked.</summary>
+        public bool HasSecret { get; set; }
+
         /// <summary>
-        /// True when the line is a KEY=VALUE assignment (not a comment or blank).
+        /// Everything before the value — e.g. "KEY=" or "# KEY=" or "export KEY=".
+        /// Null when HasSecret is false.
         /// </summary>
-        public bool IsAssignment { get; set; }
+        public string Prefix { get; set; }
 
-        /// <summary>Key portion, e.g. "DATABASE_URL". Null for non-assignment lines.</summary>
-        public string Key { get; set; }
-
-        /// <summary>The real value (kept in memory only, never written anywhere).</summary>
+        /// <summary>The real value. Kept in memory only, never written to disk.</summary>
         public string Value { get; set; }
 
-        /// <summary>Returns the display text given the current reveal state.</summary>
+        /// <summary>Returns the display text for this line given the current reveal state.</summary>
         public string DisplayText(bool revealed)
         {
-            if (!IsAssignment)
-                return Raw; // comments, blanks — always shown as-is
+            if (!HasSecret)
+                return Raw;
 
             if (revealed)
                 return Raw;
 
-            // Mask: show KEY=******** preserving the surrounding quote style
-            var mask = new string('*', Math.Max(8, Value?.Length ?? 8));
-            return $"{Key}={mask}";
+            // Mask the value portion only; preserve prefix (key name, comment marker, etc.)
+            string mask = new string('*', Math.Max(8, Value == null ? 8 : Value.Length));
+            return Prefix + mask;
         }
     }
 
-    /// <summary>
-    /// Parses the raw text of an .env file into a list of <see cref="EnvLine"/>
-    /// objects. Masking is purely in-memory.
-    /// </summary>
     public static class EnvMaskingService
     {
-        // Matches: KEY=VALUE  or  KEY="VALUE"  or  KEY='VALUE'
-        // Group 1 = key, Group 2 = full value (including any surrounding quotes)
-        private static readonly Regex AssignmentRegex = new Regex(
-            @"^([A-Za-z_][A-Za-z0-9_]*)=(.*)",
+        // Matches active assignments: KEY=value or export KEY=value
+        // Captures: Group 1 = everything up to and including "=", Group 2 = value
+        private static readonly Regex ActiveRegex = new Regex(
+            @"^((?:export\s+)?[A-Za-z_][A-Za-z0-9_]*\s*=)(.*)",
             RegexOptions.Compiled);
 
-        /// <summary>
-        /// Parses every line in <paramref name="rawText"/> and returns an ordered
-        /// list of <see cref="EnvLine"/> objects.
-        /// </summary>
+        // Matches commented-out assignments: # KEY=value or #KEY=value
+        // Captures: Group 1 = everything up to and including "=", Group 2 = value
+        private static readonly Regex CommentedRegex = new Regex(
+            @"^(#\s*[A-Za-z_][A-Za-z0-9_]*\s*=)(.*)",
+            RegexOptions.Compiled);
+
         public static List<EnvLine> Parse(string rawText)
         {
             var lines  = rawText.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None);
@@ -69,29 +72,43 @@ namespace QuickLook.Plugin.DevPowerTool
             {
                 var trimmed = raw.Trim();
 
-                // Blank line or comment
-                if (trimmed.Length == 0 || trimmed.StartsWith("#"))
+                // Blank line
+                if (trimmed.Length == 0)
                 {
-                    result.Add(new EnvLine { Raw = raw, IsAssignment = false });
+                    result.Add(new EnvLine { Raw = raw, HasSecret = false });
                     continue;
                 }
 
-                var m = AssignmentRegex.Match(trimmed);
+                // Try active assignment first: KEY=value or export KEY=value
+                var m = ActiveRegex.Match(trimmed);
                 if (m.Success)
                 {
                     result.Add(new EnvLine
                     {
-                        Raw          = raw,
-                        IsAssignment = true,
-                        Key          = m.Groups[1].Value,
-                        Value        = m.Groups[2].Value
+                        Raw       = raw,
+                        HasSecret = true,
+                        Prefix    = m.Groups[1].Value,
+                        Value     = m.Groups[2].Value
                     });
+                    continue;
                 }
-                else
+
+                // Try commented assignment: # KEY=value
+                m = CommentedRegex.Match(trimmed);
+                if (m.Success)
                 {
-                    // Export / other directives — treat as non-assignment
-                    result.Add(new EnvLine { Raw = raw, IsAssignment = false });
+                    result.Add(new EnvLine
+                    {
+                        Raw       = raw,
+                        HasSecret = true,
+                        Prefix    = m.Groups[1].Value,
+                        Value     = m.Groups[2].Value
+                    });
+                    continue;
                 }
+
+                // Pure comment or unrecognised line — show as-is
+                result.Add(new EnvLine { Raw = raw, HasSecret = false });
             }
 
             return result;
