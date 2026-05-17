@@ -1,10 +1,9 @@
 // ============================================================
 // QuickLook.Plugin.DevPowerTool — Helpers/ColorSwatchRenderer.cs
 //
-// Draws a small colour box immediately before each colour token
-// (#, rgb(, rgba(, hsl(, hsla( etc).
-// Uses KnownLayer.Background and GetRectsForSegment to find the
-// exact pixel position of each token in the rendered text.
+// Draws a small colour box immediately before each colour token.
+// Gets margin width directly from the editor's TextArea children
+// to avoid non-existent AvalonEdit 6.x API calls.
 // ============================================================
 
 using System.Collections.Generic;
@@ -33,6 +32,9 @@ namespace QuickLook.Plugin.DevPowerTool
         private readonly TextEditor       _editor;
         private readonly List<SwatchInfo> _swatches;
 
+        // Cached margin width — measured once on first Draw call
+        private double _marginWidth = -1;
+
         public ColorSwatchRenderer(TextEditor editor, List<SwatchInfo> swatches)
         {
             _editor   = editor;
@@ -46,10 +48,22 @@ namespace QuickLook.Plugin.DevPowerTool
             if (_swatches == null || _swatches.Count == 0) return;
             textView.EnsureVisualLines();
 
-            // Sum the width of all left-side margins (line numbers etc.)
-            double marginWidth = textView.LeftMargins
-                .OfType<FrameworkElement>()
-                .Sum(m => m.ActualWidth);
+            // Measure margin width once: find the TextView inside the TextArea
+            // and use its offset from the TextArea left edge.
+            if (_marginWidth < 0)
+            {
+                try
+                {
+                    // The TextView's translation relative to the TextArea gives the margin width
+                    var transform = textView.TransformToAncestor(_editor.TextArea);
+                    var origin    = transform.Transform(new Point(0, 0));
+                    _marginWidth  = origin.X;
+                }
+                catch
+                {
+                    _marginWidth = 40; // safe fallback
+                }
+            }
 
             foreach (var s in _swatches)
             {
@@ -77,8 +91,8 @@ namespace QuickLook.Plugin.DevPowerTool
                 double boxX = rect.Left - BoxSize - Gap;
                 double boxY = rect.Top + (rect.Height - BoxSize) / 2.0;
 
-                // Skip if box falls inside the line number margin
-                if (boxX < marginWidth) continue;
+                // Don't draw inside the line number margin
+                if (boxX < _marginWidth - BoxSize) continue;
 
                 var fillBrush = new SolidColorBrush(s.Color);
                 fillBrush.Freeze();
