@@ -1,9 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <!-- QuickLook.Plugin.DevPowerTool — QuickLook.Plugin.DevPowerTool.csproj
-
-    Targets net462. UseWPF=true for WPF type resolution.
-    All UI is pure code-behind (no .xaml files) to avoid
-    x:Name / InitializeComponent generation issues in CI. -->
+    Uses AvalonEdit — same editor as QuickLook's built-in TextViewer.
+    All UI is pure code-behind (no .xaml files). -->
 <Project Sdk="Microsoft.NET.Sdk">
     <PropertyGroup>
         <OutputType>Library</OutputType>
@@ -39,21 +37,27 @@
         <None Remove="QuickLook.Common\**" />
         <Page Remove="QuickLook.Common\**" />
     </ItemGroup>
-    <!-- Explicitly exclude old XAML files if they still exist on disk -->
+    <!-- Exclude XAML files if they still exist on disk from old version -->
     <ItemGroup>
         <Page Remove="PreviewPanel.xaml" />
         <Page Remove="ErrorPanel.xaml" />
         <Compile Remove="PreviewPanel.xaml.cs" />
         <Compile Remove="ErrorPanel.xaml.cs" />
+        <Compile Remove="Helpers\PreviewRenderer.cs" />
     </ItemGroup>
-    <!-- Plugin metadata — copied to output so QuickLook can find the plugin -->
+    <!-- AvalonEdit: same editor used by QuickLook's built-in TextViewer -->
+    <ItemGroup>
+        <PackageReference Include="AvalonEdit"
+                          Version="6.3.0.90" />
+    </ItemGroup>
+    <!-- Plugin metadata: copied to output directory so QuickLook finds us -->
     <ItemGroup>
         <None Include="QuickLook.Plugin.Metadata.Base.config" />
         <None Include="QuickLook.Plugin.Metadata.config">
             <CopyToOutputDirectory>Always</CopyToOutputDirectory>
         </None>
     </ItemGroup>
-    <!-- Reference QuickLook.Common via the git submodule -->
+    <!-- QuickLook.Common submodule -->
     <ItemGroup>
         <ProjectReference Include="QuickLook.Common\QuickLook.Common.csproj" />
     </ItemGroup>
