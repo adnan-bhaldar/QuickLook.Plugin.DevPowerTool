@@ -1,17 +1,16 @@
 // ============================================================
 // QuickLook.Plugin.DevPowerTool — Helpers/ColorSwatchRenderer.cs
 //
-// Draws colour swatches using TWO approaches:
+// Draws a small colour box immediately before each colour token
+// (before the #, rgba(, hsl( etc).
 //
-// 1. A small filled square BEHIND the colour token text
-//    (drawn on the Background layer — always visible)
-// 2. A thin coloured underline below the token
-//
-// This guarantees swatches are visible regardless of the
-// line number margin width or scroll position.
+// Uses KnownLayer.Background so it renders under the text.
+// Gets the rect of the token itself from AvalonEdit, then draws
+// the box just to the left of that rect.
 // ============================================================
 
 using System.Collections.Generic;
+using System.Linq;
 using System.Windows;
 using System.Windows.Media;
 using ICSharpCode.AvalonEdit;
@@ -29,8 +28,9 @@ namespace QuickLook.Plugin.DevPowerTool
 
     public sealed class ColorSwatchRenderer : IBackgroundRenderer
     {
-        private const double SwatchH  = 3;  // underline height
-        private const double BoxSize  = 10; // small box size
+        private const double BoxSize   = 10;
+        private const double BoxRadius = 2;
+        private const double Gap       = 3; // gap between box right edge and token text
 
         private readonly TextEditor       _editor;
         private readonly List<SwatchInfo> _swatches;
@@ -41,7 +41,6 @@ namespace QuickLook.Plugin.DevPowerTool
             _swatches = swatches;
         }
 
-        // Use Background layer so we draw UNDER the text
         public KnownLayer Layer => KnownLayer.Background;
 
         public void Draw(TextView textView, DrawingContext ctx)
@@ -49,14 +48,19 @@ namespace QuickLook.Plugin.DevPowerTool
             if (_swatches == null || _swatches.Count == 0) return;
             textView.EnsureVisualLines();
 
+            // Get the total width of all left margins (line numbers etc.)
+            // so we can correctly position the swatch to the left of the token.
+            double marginWidth = textView.ActualWidth - textView.DocumentWidth;
+            if (marginWidth < 0) marginWidth = 0;
+
             foreach (var s in _swatches)
             {
                 if (s.Line < 1 || s.Line > _editor.Document.LineCount) continue;
 
-                var docLine   = _editor.Document.GetLineByNumber(s.Line);
-                int tokStart  = docLine.Offset + s.CharOffset;
-                int tokLength = s.TokenLength > 0 ? s.TokenLength : 1;
-                int tokEnd    = tokStart + tokLength;
+                var docLine  = _editor.Document.GetLineByNumber(s.Line);
+                int tokStart = docLine.Offset + s.CharOffset;
+                int tokLen   = s.TokenLength > 0 ? s.TokenLength : 1;
+                int tokEnd   = tokStart + tokLen;
 
                 if (tokStart >= docLine.EndOffset) continue;
                 if (tokEnd   >  docLine.EndOffset) tokEnd = docLine.EndOffset;
@@ -67,37 +71,35 @@ namespace QuickLook.Plugin.DevPowerTool
                     EndOffset   = tokEnd
                 };
 
+                // GetRectsForSegment returns rects in visual coordinates
+                var rects = BackgroundGeometryBuilder.GetRectsForSegment(textView, seg).ToList();
+                if (rects.Count == 0) continue;
+
+                var rect = rects[0];
+
+                // The box sits just to the left of the token start
+                double boxX = rect.Left - BoxSize - Gap;
+                double boxY = rect.Top + (rect.Height - BoxSize) / 2.0;
+
+                // If box would go into the line number margin or off screen, skip
+                if (boxX < marginWidth) continue;
+
                 var brush = new SolidColorBrush(s.Color);
                 brush.Freeze();
 
-                bool isDark       = (0.299 * s.Color.R + 0.587 * s.Color.G + 0.114 * s.Color.B) < 128;
-                var  borderColor  = isDark
-                    ? Color.FromArgb(120, 255, 255, 255)
-                    : Color.FromArgb(120, 0,   0,   0);
-                var  borderBrush  = new SolidColorBrush(borderColor);
+                bool isDark = (0.299 * s.Color.R + 0.587 * s.Color.G + 0.114 * s.Color.B) < 128;
+                var borderBrush = new SolidColorBrush(isDark
+                    ? Color.FromArgb(100, 255, 255, 255)
+                    : Color.FromArgb(100, 0,   0,   0));
                 borderBrush.Freeze();
-                var  pen = new Pen(borderBrush, 0.8);
+
+                var pen = new Pen(borderBrush, 0.8);
                 pen.Freeze();
 
-                foreach (var rect in BackgroundGeometryBuilder.GetRectsForSegment(textView, seg))
-                {
-                    // Draw a small coloured box at the start of the token
-                    double boxX = rect.Left;
-                    double boxY = rect.Top + (rect.Height - BoxSize) / 2.0;
-
-                    ctx.DrawRoundedRectangle(
-                        brush, pen,
-                        new Rect(boxX, boxY, BoxSize, BoxSize),
-                        2, 2);
-
-                    // Draw a coloured underline spanning the full token
-                    double lineY = rect.Bottom - SwatchH - 1;
-                    ctx.DrawRectangle(
-                        brush, null,
-                        new Rect(rect.Left, lineY, rect.Width, SwatchH));
-
-                    break;
-                }
+                ctx.DrawRoundedRectangle(
+                    brush, pen,
+                    new Rect(boxX, boxY, BoxSize, BoxSize),
+                    BoxRadius, BoxRadius);
             }
         }
     }
