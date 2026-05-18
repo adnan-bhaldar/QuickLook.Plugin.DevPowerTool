@@ -7,9 +7,10 @@
 #   → creates a new "latest" pre-release
 #     commit message shown in monospace code block
 #
-# Every push of a vX.X.X tag:
+# Every version tag (v1.0.0 OR 1.0.0):
 #   → builds the plugin
-#   → creates a proper stable Release titled "latest"
+#   → if release already exists: uploads .qlplugin to it
+#   → if release does not exist: creates it with .qlplugin
 # ============================================================
 
 name: Build and Release
@@ -17,7 +18,9 @@ name: Build and Release
 on:
   push:
     branches: [main]
-    tags: [ 'v*.*.*', '*.*.*' ]
+    tags:
+      - "v*.*.*"
+      - "[0-9]*.[0-9]*.[0-9]*"
 
 jobs:
   build:
@@ -117,11 +120,13 @@ jobs:
             "QuickLook.Plugin.DevPowerTool.qlplugin"
 
       # ════════════════════════════════════════════════════════════════════
-      # STABLE RELEASE — only when a vX.X.X tag is pushed manually
+      # STABLE RELEASE — any version tag: v1.0.0 OR 1.0.0
+      # If release already exists (created manually): uploads asset to it
+      # If release does not exist: creates it with asset
       # ════════════════════════════════════════════════════════════════════
 
-      - name: Create stable release
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Upload or create stable release
+        if: startsWith(github.ref, 'refs/tags/')
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -129,7 +134,16 @@ jobs:
           $tag       = "${{ github.ref_name }}"
           $commitMsg = git log -1 --pretty=format:"%B"
 
-          $notes = @"
+          # Check if release already exists
+          $releaseExists = gh release view $tag 2>&1
+          if ($LASTEXITCODE -eq 0) {
+            # Release exists — just upload the asset
+            Write-Host "Release $tag exists — uploading asset"
+            gh release upload $tag "QuickLook.Plugin.DevPowerTool.qlplugin" --clobber
+          } else {
+            # Release does not exist — create it
+            Write-Host "Creating release $tag"
+            $notes = @"
           ````
           $commitMsg
           ````
@@ -139,9 +153,9 @@ jobs:
           2. Press **Space** on the ``.qlplugin`` file
           3. Click **Install** then restart QuickLook
           "@
-
-          gh release create $tag `
-            --title "latest" `
-            --notes $notes `
-            --latest `
-            "QuickLook.Plugin.DevPowerTool.qlplugin"
+            gh release create $tag `
+              --title "$tag" `
+              --notes $notes `
+              --latest `
+              "QuickLook.Plugin.DevPowerTool.qlplugin"
+          }
