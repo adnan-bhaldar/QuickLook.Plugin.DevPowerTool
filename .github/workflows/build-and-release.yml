@@ -4,8 +4,8 @@
 # Every push to main:
 #   → deletes old "latest" pre-release + tag
 #   → builds the plugin
-#   → creates a new "latest" pre-release using the latest
-#     commit message as the release description
+#   → creates a new "latest" pre-release
+#     commit message shown in monospace code block
 #
 # Every push of a vX.X.X tag:
 #   → builds the plugin
@@ -43,9 +43,8 @@ jobs:
         run: nuget restore QuickLook.Plugin.DevPowerTool.sln
 
       # ── 4. Build Release ─────────────────────────────────────────────────
-      # PreBuildEventUseInParallel=false + PreBuildEvent="" skips the
-      # update-version.ps1 pre-build script inside QuickLook.Common.csproj
-      # which does not exist in the CI environment.
+      # PreBuildEvent="" skips update-version.ps1 inside QuickLook.Common
+      # which does not exist in CI.
       - name: Build solution
         run: |
           msbuild QuickLook.Plugin.DevPowerTool.sln `
@@ -62,8 +61,9 @@ jobs:
           $OutFile = "QuickLook.Plugin.DevPowerTool.qlplugin"
           $TempDir = New-Item -ItemType Directory -Path "$env:TEMP\ql_pack" -Force
 
-          Copy-Item "$BinDir\QuickLook.Plugin.DevPowerTool.dll" -Destination $TempDir
-          Copy-Item "$BinDir\QuickLook.Plugin.Metadata.config"  -Destination $TempDir
+          Copy-Item "$BinDir\QuickLook.Plugin.DevPowerTool.dll"  -Destination $TempDir
+          Copy-Item "$BinDir\QuickLook.Plugin.Metadata.config"   -Destination $TempDir
+          Copy-Item "$BinDir\ICSharpCode.AvalonEdit.dll"         -Destination $TempDir
 
           Compress-Archive -Path "$TempDir\*" -DestinationPath $OutFile -Force
           Write-Host "Packaged: $OutFile"
@@ -77,7 +77,6 @@ jobs:
 
       # ════════════════════════════════════════════════════════════════════
       # PRE-RELEASE — every push to main
-      # Uses the latest commit message as the release description.
       # ════════════════════════════════════════════════════════════════════
 
       - name: Delete old pre-release and tag (if exists)
@@ -86,8 +85,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Pipe to Out-Null suppresses output; exit 0 ensures we never
-          # fail here — on first run the release simply doesn't exist yet.
           gh release delete latest --yes --cleanup-tag 2>&1 | Out-Null
           exit 0
 
@@ -97,32 +94,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # ── Collect commit info ─────────────────────────────────────────
-          $sha         = "${{ github.sha }}".Substring(0, 7)
-          $runNum      = "${{ github.run_number }}"
-          $date        = (Get-Date -Format "yyyy-MM-dd HH:mm UTC")
-          $actor       = "${{ github.actor }}"
+          $commitMsg = git log -1 --pretty=format:"%B"
 
-          # Full commit message (subject + body if present)
-          $commitMsg   = git log -1 --pretty=format:"%B"
-
-          # ── Build release notes ─────────────────────────────────────────
           $notes = @"
-          ## ⚡ Latest Pre-release
+          ````
+          $commitMsg
+          ````
 
-          ### 📝 $commitMsg
-
-          ---
-
-          | | |
-          |---|---|
-          | **Commit** | [$sha](https://github.com/${{ github.repository }}/commit/${{ github.sha }}) |
-          | **Run** | [#$runNum](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) |
-          | **Author** | $actor |
-          | **Built** | $date |
-
-          > ⚠️ This is a pre-release built automatically from the latest commit on ``main``.
-          > For stable builds use a versioned release.
+          > ⚠️ This is a pre-release built automatically from the latest commit on ``main``. For stable builds use a stable release.
 
           ### Install
           1. Make sure QuickLook is running
@@ -137,8 +116,6 @@ jobs:
             --target main `
             "QuickLook.Plugin.DevPowerTool.qlplugin"
 
-          Write-Host "Pre-release 'latest' created"
-
       # ════════════════════════════════════════════════════════════════════
       # STABLE RELEASE — only when a vX.X.X tag is pushed manually
       # ════════════════════════════════════════════════════════════════════
@@ -149,21 +126,13 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          $tag        = "${{ github.ref_name }}"
-          $date       = (Get-Date -Format "yyyy-MM-dd HH:mm UTC")
-          $commitMsg  = git log -1 --pretty=format:"%B"
+          $tag       = "${{ github.ref_name }}"
+          $commitMsg = git log -1 --pretty=format:"%B"
 
           $notes = @"
-          ## ✅ Stable Release $tag
-
-          ### 📝 $commitMsg
-
-          ---
-
-          | | |
-          |---|---|
-          | **Tag** | $tag |
-          | **Built** | $date |
+          ````
+          $commitMsg
+          ````
 
           ### Install
           1. Make sure QuickLook is running
@@ -176,5 +145,3 @@ jobs:
             --notes $notes `
             --latest `
             "QuickLook.Plugin.DevPowerTool.qlplugin"
-
-          Write-Host "Stable release $tag created"
