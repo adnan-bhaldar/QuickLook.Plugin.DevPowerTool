@@ -28,7 +28,7 @@ using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Shapes;
 using ICSharpCode.AvalonEdit;
-using QuickLook.Common.Helpers;
+using Microsoft.Win32;
 
 namespace QuickLook.Plugin.DevPowerTool
 {
@@ -74,7 +74,7 @@ namespace QuickLook.Plugin.DevPowerTool
         {
             _path     = path;
             _fileType = fileType;
-            _isDark   = OSThemeHelper.AppsUseDarkTheme();
+            _isDark   = IsSystemDarkTheme();
 
             Build();
             Loaded += async (s, e) => await LoadAsync();
@@ -122,18 +122,26 @@ namespace QuickLook.Plugin.DevPowerTool
                 }
             };
 
-            if (_isDark)
+            var bgBrush = new SolidColorBrush(_isDark
+                ? Color.FromRgb(0x1E, 0x1E, 0x1E)
+                : Colors.White);
+            var fgBrush = new SolidColorBrush(_isDark
+                ? Color.FromRgb(0xD4, 0xD4, 0xD4)
+                : Color.FromRgb(0x1E, 0x1E, 0x1E));
+            var lnBrush = new SolidColorBrush(_isDark
+                ? Color.FromRgb(0x85, 0x85, 0x85)
+                : Color.FromRgb(0xA0, 0xA0, 0xA0));
+
+            ed.Background            = bgBrush;
+            ed.Foreground            = fgBrush;
+            ed.LineNumbersForeground = lnBrush;
+
+            // Also set on TextArea directly — AvalonEdit can override editor-level colours
+            ed.Loaded += (s, e) =>
             {
-                ed.Background            = new SolidColorBrush(Color.FromRgb(0x1E, 0x1E, 0x1E));
-                ed.Foreground            = new SolidColorBrush(Color.FromRgb(0xD4, 0xD4, 0xD4));
-                ed.LineNumbersForeground = new SolidColorBrush(Color.FromRgb(0x85, 0x85, 0x85));
-            }
-            else
-            {
-                ed.Background            = new SolidColorBrush(Colors.White);
-                ed.Foreground            = new SolidColorBrush(Color.FromRgb(0x1E, 0x1E, 0x1E));
-                ed.LineNumbersForeground = new SolidColorBrush(Color.FromRgb(0xA0, 0xA0, 0xA0));
-            }
+                ed.TextArea.Background = bgBrush;
+                ed.TextArea.Foreground = fgBrush;
+            };
 
             return ed;
         }
@@ -418,6 +426,26 @@ namespace QuickLook.Plugin.DevPowerTool
             _editor.IsReadOnly = false;
             _editor.Text       = msg;
             _editor.IsReadOnly = true;
+        }
+
+        /// <summary>
+        /// Detects dark mode via Windows registry.
+        /// Falls back to false (light) if registry key is unavailable.
+        /// </summary>
+        private static bool IsSystemDarkTheme()
+        {
+            try
+            {
+                const string key = @"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize";
+                using (var reg = Registry.CurrentUser.OpenSubKey(key))
+                {
+                    if (reg == null) return false;
+                    var val = reg.GetValue("AppsUseLightTheme");
+                    if (val is int i) return i == 0;
+                }
+            }
+            catch { }
+            return false;
         }
     }
 }

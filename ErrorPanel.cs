@@ -6,7 +6,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
-using QuickLook.Common.Helpers;
+using Microsoft.Win32;
 
 namespace QuickLook.Plugin.DevPowerTool
 {
@@ -14,7 +14,7 @@ namespace QuickLook.Plugin.DevPowerTool
     {
         public ErrorPanel(string message)
         {
-            bool isDark = OSThemeHelper.AppsUseDarkTheme();
+            bool isDark = IsSystemDarkTheme();
 
             Background = new SolidColorBrush(isDark
                 ? Color.FromRgb(0x1E, 0x1E, 0x1E)
@@ -65,6 +65,22 @@ namespace QuickLook.Plugin.DevPowerTool
             });
 
             Content = stack;
+        }
+
+        private static bool IsSystemDarkTheme()
+        {
+            try
+            {
+                const string key = @"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize";
+                using (var reg = Registry.CurrentUser.OpenSubKey(key))
+                {
+                    if (reg == null) return false;
+                    var val = reg.GetValue("AppsUseLightTheme");
+                    if (val is int i) return i == 0;
+                }
+            }
+            catch { }
+            return false;
         }
     }
 }
