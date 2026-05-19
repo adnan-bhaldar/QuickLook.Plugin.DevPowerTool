@@ -2,15 +2,13 @@
 # .github/workflows/build-and-release.yml
 #
 # Every push to main:
-#   → deletes old "latest" pre-release + tag
 #   → builds the plugin
-#   → creates a new "latest" pre-release
-#     commit message shown in monospace code block
+#   → updates the "latest" pre-release at the top of releases
+#     using pyTooling/Actions/releaser (same as QuickLook itself)
 #
 # Every version tag (v1.0.0 OR 1.0.0):
 #   → builds the plugin
-#   → if release already exists: uploads .qlplugin to it
-#   → if release does not exist: creates it with .qlplugin
+#   → uploads .qlplugin to existing release or creates one
 # ============================================================
 
 name: Build and Release
@@ -23,31 +21,26 @@ on:
       - "[0-9]*.[0-9]*.[0-9]*"
 
 jobs:
+  # ── JOB 1: Build ─────────────────────────────────────────────────────────
   build:
     runs-on: windows-latest
 
     permissions:
-      contents: write
+      contents: read
 
     steps:
-      # ── 1. Checkout + submodules ────────────────────────────────────────
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           submodules: recursive
           fetch-depth: 0
 
-      # ── 2. Setup MSBuild ────────────────────────────────────────────────
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
-      # ── 3. Restore NuGet packages ────────────────────────────────────────
       - name: Restore NuGet packages
         run: nuget restore QuickLook.Plugin.DevPowerTool.sln
 
-      # ── 4. Build Release ─────────────────────────────────────────────────
-      # PreBuildEvent="" skips update-version.ps1 inside QuickLook.Common
-      # which does not exist in CI.
       - name: Build solution
         run: |
           msbuild QuickLook.Plugin.DevPowerTool.sln `
@@ -55,7 +48,6 @@ jobs:
             /p:Platform="Any CPU" `
             /m
 
-      # ── 5. Package into .qlplugin ────────────────────────────────────────
       - name: Package plugin
         shell: pwsh
         run: |
@@ -70,91 +62,75 @@ jobs:
           Compress-Archive -Path "$TempDir\*" -DestinationPath $OutFile -Force
           Write-Host "Packaged: $OutFile"
 
-      # ── 6. Upload artifact ───────────────────────────────────────────────
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: QuickLook.Plugin.DevPowerTool
           path: QuickLook.Plugin.DevPowerTool.qlplugin
 
-      # ════════════════════════════════════════════════════════════════════
-      # PRE-RELEASE — every push to main
-      # ════════════════════════════════════════════════════════════════════
+  # ── JOB 2: Publish pre-release (main push only) ───────────────────────────
+  publish-prerelease:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions: write-all
 
-      - name: Delete old pre-release and tag (if exists)
-        if: github.ref == 'refs/heads/main'
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release delete latest --yes --cleanup-tag 2>&1 | Out-Null
-          exit 0
+    if: github.ref == 'refs/heads/main'
 
-      - name: Create pre-release
-        if: github.ref == 'refs/heads/main'
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          $commitMsg = git log -1 --pretty=format:"%B"
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: QuickLook.Plugin.DevPowerTool
 
-          $notes = @"
-          ````
-          $commitMsg
-          ````
+      - name: Update latest pre-release
+        uses: pyTooling/Actions/releaser@r6
+        with:
+          tag: latest
+          rm: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+          files: QuickLook.Plugin.DevPowerTool.qlplugin
 
-          > ⚠️ This is a pre-release built automatically from the latest commit on ``main``. For stable builds use a stable release.
+  # ── JOB 3: Publish stable release (version tag only) ─────────────────────
+  publish-stable:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions: write-all
 
-          ### Install
-          1. Make sure QuickLook is running
-          2. Press **Space** on the ``.qlplugin`` file
-          3. Click **Install** then restart QuickLook
-          "@
+    if: startsWith(github.ref, 'refs/tags/')
 
-          gh release create latest `
-            --title "latest" `
-            --notes $notes `
-            --prerelease `
-            --target main `
-            "QuickLook.Plugin.DevPowerTool.qlplugin"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      # ════════════════════════════════════════════════════════════════════
-      # STABLE RELEASE — any version tag: v1.0.0 OR 1.0.0
-      # If release already exists (created manually): uploads asset to it
-      # If release does not exist: creates it with asset
-      # ════════════════════════════════════════════════════════════════════
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: QuickLook.Plugin.DevPowerTool
 
       - name: Upload or create stable release
-        if: startsWith(github.ref, 'refs/tags/')
-        shell: pwsh
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          $tag       = "${{ github.ref_name }}"
-          $commitMsg = git log -1 --pretty=format:"%B"
+          TAG="${{ github.ref_name }}"
 
           # Check if release already exists
-          $releaseExists = gh release view $tag 2>&1
-          if ($LASTEXITCODE -eq 0) {
-            # Release exists — just upload the asset
-            Write-Host "Release $tag exists — uploading asset"
-            gh release upload $tag "QuickLook.Plugin.DevPowerTool.qlplugin" --clobber
-          } else {
-            # Release does not exist — create it
-            Write-Host "Creating release $tag"
-            $notes = @"
-          ````
-          $commitMsg
-          ````
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "Release $TAG exists — uploading asset"
+            gh release upload "$TAG" QuickLook.Plugin.DevPowerTool.qlplugin --clobber
+          else
+            echo "Creating release $TAG"
+            COMMIT_MSG=$(git log -1 --pretty=format:"%s%n%b")
+            gh release create "$TAG" \
+              --title "$TAG" \
+              --notes "\`\`\`
+          $COMMIT_MSG
+          \`\`\`
 
           ### Install
           1. Make sure QuickLook is running
-          2. Press **Space** on the ``.qlplugin`` file
-          3. Click **Install** then restart QuickLook
-          "@
-            gh release create $tag `
-              --title "$tag" `
-              --notes $notes `
-              --latest `
-              "QuickLook.Plugin.DevPowerTool.qlplugin"
-          }
+          2. Press **Space** on the \`.qlplugin\` file
+          3. Click **Install** then restart QuickLook" \
+              --latest \
+              QuickLook.Plugin.DevPowerTool.qlplugin
+          fi
