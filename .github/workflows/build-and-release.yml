@@ -53,7 +53,6 @@ jobs:
           msbuild QuickLook.Plugin.DevPowerTool.sln `
             /p:Configuration=Release `
             /p:Platform="Any CPU" `
-            /p:PreBuildEvent="" `
             /m
 
       # ── 5. Package into .qlplugin ────────────────────────────────────────
