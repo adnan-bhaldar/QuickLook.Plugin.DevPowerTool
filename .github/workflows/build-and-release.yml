@@ -3,8 +3,8 @@
 #
 # Every push to main:
 #   → builds the plugin
-#   → updates the "latest" pre-release at the top of releases
-#     using pyTooling/Actions/releaser (same as QuickLook itself)
+#   → deletes old "latest" pre-release + tag
+#   → creates new "latest" pre-release with correct commit msg
 #
 # Every version tag (v1.0.0 OR 1.0.0):
 #   → builds the plugin
@@ -15,13 +15,16 @@ name: Build and Release
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
     tags:
       - "v*.*.*"
       - "[0-9]*.[0-9]*.[0-9]*"
 
 jobs:
-  # ── JOB 1: Build ─────────────────────────────────────────────────────────
+  # ───────────────────────────────────────────────────────────
+  # JOB 1 — Build
+  # ───────────────────────────────────────────────────────────
   build:
     runs-on: windows-latest
 
@@ -32,7 +35,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          submodules: recursive
           fetch-depth: 0
 
       - name: Setup MSBuild
@@ -53,13 +55,28 @@ jobs:
         run: |
           $BinDir  = "bin\Release"
           $OutFile = "QuickLook.Plugin.DevPowerTool.qlplugin"
-          $TempDir = New-Item -ItemType Directory -Path "$env:TEMP\ql_pack" -Force
+          $TempDir = New-Item `
+            -ItemType Directory `
+            -Path "$env:TEMP\ql_pack" `
+            -Force
 
-          Copy-Item "$BinDir\QuickLook.Plugin.DevPowerTool.dll"  -Destination $TempDir
-          Copy-Item "$BinDir\QuickLook.Plugin.Metadata.config"   -Destination $TempDir
-          Copy-Item "$BinDir\ICSharpCode.AvalonEdit.dll"         -Destination $TempDir
+          Copy-Item `
+            "$BinDir\QuickLook.Plugin.DevPowerTool.dll" `
+            -Destination $TempDir
 
-          Compress-Archive -Path "$TempDir\*" -DestinationPath $OutFile -Force
+          Copy-Item `
+            "$BinDir\QuickLook.Plugin.Metadata.config" `
+            -Destination $TempDir
+
+          Copy-Item `
+            "$BinDir\ICSharpCode.AvalonEdit.dll" `
+            -Destination $TempDir
+
+          Compress-Archive `
+            -Path "$TempDir\*" `
+            -DestinationPath $OutFile `
+            -Force
+
           Write-Host "Packaged: $OutFile"
 
       - name: Upload build artifact
@@ -68,32 +85,83 @@ jobs:
           name: QuickLook.Plugin.DevPowerTool
           path: QuickLook.Plugin.DevPowerTool.qlplugin
 
-  # ── JOB 2: Publish pre-release (main push only) ───────────────────────────
+  # ───────────────────────────────────────────────────────────
+  # JOB 2 — Publish pre-release (main branch only)
+  # ───────────────────────────────────────────────────────────
   publish-prerelease:
     needs: build
     runs-on: ubuntu-latest
+
     permissions: write-all
 
     if: github.ref == 'refs/heads/main'
 
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Download build artifact
         uses: actions/download-artifact@v4
         with:
           name: QuickLook.Plugin.DevPowerTool
 
-      - name: Update latest pre-release
-        uses: pyTooling/Actions/releaser@r6
-        with:
-          tag: latest
-          rm: true
-          token: ${{ secrets.GITHUB_TOKEN }}
-          files: QuickLook.Plugin.DevPowerTool.qlplugin
+      - name: Delete old pre-release and tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete latest \
+            --yes \
+            --cleanup-tag \
+            2>/dev/null || true
 
-  # ── JOB 3: Publish stable release (version tag only) ─────────────────────
+      - name: Create pre-release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 -c "
+          import subprocess
+
+          subject = subprocess.check_output(
+              ['git', 'log', '-1', '--pretty=format:%s']
+          ).decode().strip()
+
+          body = subprocess.check_output(
+              ['git', 'log', '-1', '--pretty=format:%b']
+          ).decode().strip()
+
+          msg = subject + ('\n' + body if body else '')
+
+          notes = '''{}
+
+          > ⚠️ This is a pre-release built automatically from
+          > the latest commit on `main`.
+          > For stable builds use a stable release.
+
+          ### Install
+          1. Make sure QuickLook is running
+          2. Press **Space** on the `.qlplugin` file
+          3. Click **Install** then restart QuickLook
+          '''.format(msg)
+
+          open('/tmp/notes.md', 'w').write(notes)
+          "
+
+          gh release create latest \
+            --title "latest" \
+            --notes-file /tmp/notes.md \
+            --prerelease \
+            --target main \
+            QuickLook.Plugin.DevPowerTool.qlplugin
+
+  # ───────────────────────────────────────────────────────────
+  # JOB 3 — Publish stable release (tags only)
+  # ───────────────────────────────────────────────────────────
   publish-stable:
     needs: build
     runs-on: ubuntu-latest
+
     permissions: write-all
 
     if: startsWith(github.ref, 'refs/tags/')
@@ -101,6 +169,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Download build artifact
         uses: actions/download-artifact@v4
@@ -108,29 +178,49 @@ jobs:
           name: QuickLook.Plugin.DevPowerTool
 
       - name: Upload or create stable release
-        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${{ github.ref_name }}"
 
-          # Check if release already exists
           if gh release view "$TAG" > /dev/null 2>&1; then
             echo "Release $TAG exists — uploading asset"
-            gh release upload "$TAG" QuickLook.Plugin.DevPowerTool.qlplugin --clobber
+
+            gh release upload \
+              "$TAG" \
+              QuickLook.Plugin.DevPowerTool.qlplugin \
+              --clobber
+
           else
             echo "Creating release $TAG"
-            COMMIT_MSG=$(git log -1 --pretty=format:"%s%n%b")
-            gh release create "$TAG" \
-              --title "$TAG" \
-              --notes "\`\`\`
-          $COMMIT_MSG
-          \`\`\`
+
+            python3 -c "
+          import subprocess
+
+          subject = subprocess.check_output(
+              ['git', 'log', '-1', '--pretty=format:%s']
+          ).decode().strip()
+
+          body = subprocess.check_output(
+              ['git', 'log', '-1', '--pretty=format:%b']
+          ).decode().strip()
+
+          msg = subject + ('\n' + body if body else '')
+
+          notes = '''{}
 
           ### Install
           1. Make sure QuickLook is running
-          2. Press **Space** on the \`.qlplugin\` file
-          3. Click **Install** then restart QuickLook" \
+          2. Press **Space** on the `.qlplugin` file
+          3. Click **Install** then restart QuickLook
+          '''.format(msg)
+
+          open('/tmp/notes.md', 'w').write(notes)
+          "
+
+            gh release create "$TAG" \
+              --title "$TAG" \
+              --notes-file /tmp/notes.md \
               --latest \
               QuickLook.Plugin.DevPowerTool.qlplugin
           fi
