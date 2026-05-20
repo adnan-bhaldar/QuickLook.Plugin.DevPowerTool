@@ -1,19 +1,5 @@
 // ============================================================
 // QuickLook.Plugin.DevPowerTool — PreviewPanel.cs
-//
-// ALL file types:
-//   - NO toolbar — editor fills 100% of window
-//   - Identical to TextViewer look
-//
-// CSS/SCSS/SASS/JSON/JS/TS:
-//   - Plain text (no syntax colour)
-//   - Colour swatches via ColorSwatchRenderer
-//   - Small swatch count badge floating bottom-left
-//
-// .env files:
-//   - Secrets masked by default
-//   - iOS-style toggle switch floating bottom-right
-//   - Clicking toggle reveals/hides all secrets
 // ============================================================
 
 using System;
@@ -28,17 +14,18 @@ using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Shapes;
 using ICSharpCode.AvalonEdit;
+using ICSharpCode.AvalonEdit.Document;
+using ICSharpCode.AvalonEdit.Highlighting;
+using ICSharpCode.AvalonEdit.Rendering;
 using Microsoft.Win32;
 
 namespace QuickLook.Plugin.DevPowerTool
 {
     public class PreviewPanel : UserControl
     {
-        // ── Constants ─────────────────────────────────────────────────────
         private const long MaxBytes = 2 * 1024 * 1024;
         private const int  MaxLines = 5_000;
 
-        // ── State ─────────────────────────────────────────────────────────
         private readonly string      _path;
         private readonly DevFileType _fileType;
         private readonly bool        _isDark;
@@ -46,29 +33,21 @@ namespace QuickLook.Plugin.DevPowerTool
         private List<EnvLine> _envLines;
         private bool          _revealed = false;
 
-        // ── Controls ──────────────────────────────────────────────────────
         private TextEditor _editor;
+        private TextBlock  _swatchCountText;
+        private Border     _swatchCountOverlay;
+        private Border     _toggleTrack;
+        private Ellipse    _toggleThumb;
+        private TextBlock  _toggleLabel;
+        private bool       _toggleAnimating = false;
 
-        // Swatch count overlay (CSS files)
-        private TextBlock _swatchCountText;
-        private Border    _swatchCountOverlay;
-
-        // Toggle overlay (env files)
-        private Border    _toggleTrack;
-        private Ellipse   _toggleThumb;
-        private TextBlock _toggleLabel;
-        private bool      _toggleAnimating = false;
-
-        // ── Toggle colours ────────────────────────────────────────────────
-        private static readonly Color _trackOff = Color.FromRgb(0x78, 0x78, 0x80); // iOS grey
-        private static readonly Color _trackOn  = Color.FromRgb(0x34, 0xC7, 0x59); // iOS green
+        private static readonly Color _trackOff = Color.FromRgb(0x78, 0x78, 0x80);
+        private static readonly Color _trackOn  = Color.FromRgb(0x34, 0xC7, 0x59);
         private const double TrackW    = 38;
         private const double TrackH    = 22;
         private const double ThumbSz   = 18;
         private const double ThumbOffX = 2;
         private const double ThumbOnX  = TrackW - ThumbSz - 2;
-
-        // ── Constructor ───────────────────────────────────────────────────
 
         public PreviewPanel(string path, DevFileType fileType)
         {
@@ -80,14 +59,9 @@ namespace QuickLook.Plugin.DevPowerTool
             Loaded += async (s, e) => await LoadAsync();
         }
 
-        // ══════════════════════════════════════════════════════════════════
-        // UI CONSTRUCTION
-        // ══════════════════════════════════════════════════════════════════
-
         private void Build()
         {
             _editor = BuildEditor();
-
             var grid = new Grid();
             grid.Children.Add(_editor);
 
@@ -99,10 +73,12 @@ namespace QuickLook.Plugin.DevPowerTool
             Content = grid;
         }
 
-        // ── AvalonEdit — identical to TextViewer ──────────────────────────
-
         private TextEditor BuildEditor()
         {
+            var bgColor = _isDark ? Color.FromRgb(0x1E, 0x1E, 0x1E) : Colors.White;
+            var fgColor = _isDark ? Color.FromRgb(0xD4, 0xD4, 0xD4) : Color.FromRgb(0x1E, 0x1E, 0x1E);
+            var lnColor = _isDark ? Color.FromRgb(0x85, 0x85, 0x85) : Color.FromRgb(0xA0, 0xA0, 0xA0);
+
             var ed = new TextEditor
             {
                 IsReadOnly                    = true,
@@ -110,6 +86,9 @@ namespace QuickLook.Plugin.DevPowerTool
                 FontFamily                    = new FontFamily("Cascadia Code, Consolas, Courier New, monospace"),
                 FontSize                      = 14,
                 WordWrap                      = false,
+                Background                    = new SolidColorBrush(bgColor),
+                Foreground                    = new SolidColorBrush(fgColor),
+                LineNumbersForeground         = new SolidColorBrush(lnColor),
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
                 VerticalScrollBarVisibility   = ScrollBarVisibility.Auto,
                 Options = new TextEditorOptions
@@ -122,31 +101,15 @@ namespace QuickLook.Plugin.DevPowerTool
                 }
             };
 
-            var bgBrush = new SolidColorBrush(_isDark
-                ? Color.FromRgb(0x1E, 0x1E, 0x1E)
-                : Colors.White);
-            var fgBrush = new SolidColorBrush(_isDark
-                ? Color.FromRgb(0xD4, 0xD4, 0xD4)
-                : Color.FromRgb(0x1E, 0x1E, 0x1E));
-            var lnBrush = new SolidColorBrush(_isDark
-                ? Color.FromRgb(0x85, 0x85, 0x85)
-                : Color.FromRgb(0xA0, 0xA0, 0xA0));
+            // Force text color using a simple IHighlighter that returns our foreground
+            // This is the correct AvalonEdit way to control text color
+            ed.TextArea.TextView.LineTransformers.Add(
+                new ForegroundColorizer(new SolidColorBrush(fgColor)));
 
-            ed.Background            = bgBrush;
-            ed.Foreground            = fgBrush;
-            ed.LineNumbersForeground = lnBrush;
-
-            // Also set on TextArea directly — AvalonEdit can override editor-level colours
-            ed.Loaded += (s, e) =>
-            {
-                ed.TextArea.Background = bgBrush;
-                ed.TextArea.Foreground = fgBrush;
-            };
+            ed.TextArea.Background = new SolidColorBrush(bgColor);
 
             return ed;
         }
-
-        // ── Swatch count floating badge (CSS files) ───────────────────────
 
         private Border BuildSwatchOverlay()
         {
@@ -180,39 +143,34 @@ namespace QuickLook.Plugin.DevPowerTool
             return _swatchCountOverlay;
         }
 
-        // ── iOS-style toggle overlay (env files) ──────────────────────────
-
         private UIElement BuildToggleOverlay()
         {
-            // Track (the pill background)
             _toggleTrack = new Border
             {
-                Width             = TrackW,
-                Height            = TrackH,
-                CornerRadius      = new CornerRadius(TrackH / 2),
-                Background        = new SolidColorBrush(_trackOff),
-                Cursor            = Cursors.Hand
+                Width        = TrackW,
+                Height       = TrackH,
+                CornerRadius = new CornerRadius(TrackH / 2),
+                Background   = new SolidColorBrush(_trackOff),
+                Cursor       = Cursors.Hand
             };
 
-            // Thumb (the white circle)
             _toggleThumb = new Ellipse
             {
-                Width             = ThumbSz,
-                Height            = ThumbSz,
-                Fill              = new SolidColorBrush(Colors.White),
+                Width               = ThumbSz,
+                Height              = ThumbSz,
+                Fill                = new SolidColorBrush(Colors.White),
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment   = VerticalAlignment.Center,
-                Margin            = new Thickness(ThumbOffX, 0, 0, 0),
-                Effect            = new System.Windows.Media.Effects.DropShadowEffect
+                Margin              = new Thickness(ThumbOffX, 0, 0, 0),
+                Effect              = new System.Windows.Media.Effects.DropShadowEffect
                 {
-                    Color     = Colors.Black,
-                    Opacity   = 0.3,
-                    BlurRadius = 4,
+                    Color       = Colors.Black,
+                    Opacity     = 0.3,
+                    BlurRadius  = 4,
                     ShadowDepth = 1
                 }
             };
 
-            // Label below toggle
             _toggleLabel = new TextBlock
             {
                 Text                = "Show secrets",
@@ -225,31 +183,22 @@ namespace QuickLook.Plugin.DevPowerTool
                 Margin              = new Thickness(0, 4, 0, 0)
             };
 
-            // Stack: toggle pill on top, label below
+            var trackGrid = new Grid { Width = TrackW, Height = TrackH };
+            trackGrid.Children.Add(_toggleTrack);
+            trackGrid.Children.Add(_toggleThumb);
+
             var stack = new StackPanel
             {
                 Orientation         = Orientation.Vertical,
                 HorizontalAlignment = HorizontalAlignment.Center
             };
-
-            // Overlay the thumb on the track using a Grid
-            var trackGrid = new Grid
-            {
-                Width  = TrackW,
-                Height = TrackH
-            };
-            trackGrid.Children.Add(_toggleTrack);
-            trackGrid.Children.Add(_toggleThumb);
-
             stack.Children.Add(trackGrid);
             stack.Children.Add(_toggleLabel);
 
-            // Click handler on the whole stack
-            stack.MouseLeftButtonUp += (s, e) => ToggleSecrets();
+            stack.MouseLeftButtonUp        += (s, e) => ToggleSecrets();
             _toggleTrack.MouseLeftButtonUp += (s, e) => ToggleSecrets();
 
-            // Position: top-right corner with margin
-            var container = new Border
+            return new Border
             {
                 Child               = stack,
                 HorizontalAlignment = HorizontalAlignment.Right,
@@ -261,15 +210,12 @@ namespace QuickLook.Plugin.DevPowerTool
                 CornerRadius        = new CornerRadius(8),
                 Padding             = new Thickness(8, 6, 8, 6)
             };
-
-            return container;
         }
 
         private void ToggleSecrets()
         {
             if (_toggleAnimating) return;
             _revealed = !_revealed;
-
             AnimateToggle(_revealed);
             _toggleLabel.Text = _revealed ? "Hide secrets" : "Show secrets";
             RenderEnv();
@@ -279,18 +225,15 @@ namespace QuickLook.Plugin.DevPowerTool
         {
             _toggleAnimating = true;
 
-            // Animate track colour
-            var trackAnim = new ColorAnimation
+            var trackBrush = new SolidColorBrush(on ? _trackOff : _trackOn);
+            _toggleTrack.Background = trackBrush;
+            trackBrush.BeginAnimation(SolidColorBrush.ColorProperty, new ColorAnimation
             {
                 To             = on ? _trackOn : _trackOff,
                 Duration       = TimeSpan.FromMilliseconds(200),
                 EasingFunction = new CubicEase { EasingMode = EasingMode.EaseInOut }
-            };
-            var trackBrush = new SolidColorBrush(on ? _trackOff : _trackOn);
-            _toggleTrack.Background = trackBrush;
-            trackBrush.BeginAnimation(SolidColorBrush.ColorProperty, trackAnim);
+            });
 
-            // Animate thumb position via margin
             double fromX = on ? ThumbOffX : ThumbOnX;
             double toX   = on ? ThumbOnX  : ThumbOffX;
             _toggleThumb.Margin = new Thickness(fromX, 0, 0, 0);
@@ -304,15 +247,11 @@ namespace QuickLook.Plugin.DevPowerTool
             };
             thumbAnim.Completed += (s, e) =>
             {
-                _toggleThumb.Margin  = new Thickness(toX, 0, 0, 0);
-                _toggleAnimating     = false;
+                _toggleThumb.Margin = new Thickness(toX, 0, 0, 0);
+                _toggleAnimating    = false;
             };
             _toggleThumb.BeginAnimation(MarginProperty, thumbAnim);
         }
-
-        // ══════════════════════════════════════════════════════════════════
-        // FILE LOADING
-        // ══════════════════════════════════════════════════════════════════
 
         private async Task LoadAsync()
         {
@@ -350,10 +289,6 @@ namespace QuickLook.Plugin.DevPowerTool
             }
         }
 
-        // ══════════════════════════════════════════════════════════════════
-        // COLOUR SWATCH RENDERING
-        // ══════════════════════════════════════════════════════════════════
-
         private async Task ScanAndDrawSwatchesAsync(string text)
         {
             var swatches = new List<SwatchInfo>();
@@ -383,16 +318,11 @@ namespace QuickLook.Plugin.DevPowerTool
 
             var renderer = new ColorSwatchRenderer(_editor, swatches);
             _editor.TextArea.TextView.BackgroundRenderers.Add(renderer);
-            _editor.TextArea.TextView.InvalidateLayer(
-                ICSharpCode.AvalonEdit.Rendering.KnownLayer.Text);
+            _editor.TextArea.TextView.InvalidateLayer(KnownLayer.Text);
 
             _swatchCountText.Text          = string.Format("  {0} colour{1}", total, total == 1 ? "" : "s");
             _swatchCountOverlay.Visibility = Visibility.Visible;
         }
-
-        // ══════════════════════════════════════════════════════════════════
-        // .ENV RENDERING
-        // ══════════════════════════════════════════════════════════════════
 
         private void RenderEnv()
         {
@@ -402,10 +332,6 @@ namespace QuickLook.Plugin.DevPowerTool
                 sb.AppendLine(line.DisplayText(_revealed));
             _editor.Text = sb.ToString();
         }
-
-        // ══════════════════════════════════════════════════════════════════
-        // UTILITIES
-        // ══════════════════════════════════════════════════════════════════
 
         private static string ReadFile(string path)
         {
@@ -428,10 +354,6 @@ namespace QuickLook.Plugin.DevPowerTool
             _editor.IsReadOnly = true;
         }
 
-        /// <summary>
-        /// Detects dark mode via Windows registry.
-        /// Falls back to false (light) if registry key is unavailable.
-        /// </summary>
         private static bool IsSystemDarkTheme()
         {
             try
@@ -446,6 +368,21 @@ namespace QuickLook.Plugin.DevPowerTool
             }
             catch { }
             return false;
+        }
+    }
+
+    // Forces foreground colour on all text runs via AvalonEdit's line transformer
+    internal sealed class ForegroundColorizer : DocumentColorizingTransformer
+    {
+        private readonly Brush _brush;
+        public ForegroundColorizer(Brush brush) { _brush = brush; }
+
+        protected override void ColorizeLine(DocumentLine line)
+        {
+            ChangeLinePart(line.Offset, line.EndOffset, element =>
+            {
+                element.TextRunProperties.SetForegroundBrush(_brush);
+            });
         }
     }
 }
