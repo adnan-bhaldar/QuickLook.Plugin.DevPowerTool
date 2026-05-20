@@ -39,9 +39,9 @@
         <Compile Remove="Helpers\PreviewRenderer.cs" />
     </ItemGroup>
     <!-- AvalonEdit: same editor used by QuickLook's built-in TextViewer -->
-    <ItemGroup>
+    <!-- <ItemGroup>
         <PackageReference Include="AvalonEdit" Version="6.3.0.90" />
-    </ItemGroup>
+    </ItemGroup> -->
     <!-- Plugin metadata: copied to output directory so QuickLook finds us -->
     <ItemGroup>
         <None Include="QuickLook.Plugin.Metadata.Base.config" />
