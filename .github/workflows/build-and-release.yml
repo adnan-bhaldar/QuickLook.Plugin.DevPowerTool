@@ -131,7 +131,11 @@ jobs:
               ['git', 'log', '-1', '--pretty=format:%b']
           ).decode().strip()
 
-          msg = subject + ('\n' + body if body else '')
+          # Format everything inside a code block to match the second image's font/size
+          msg = '```\n' + subject
+          if body:
+              msg += '\n\n' + body
+          msg += '\n```'
 
           notes = '''{}
 
