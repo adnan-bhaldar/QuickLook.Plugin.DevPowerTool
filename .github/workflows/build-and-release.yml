@@ -135,8 +135,7 @@ jobs:
 
           notes = '''{}
 
-          > ⚠️ This is a pre-release built automatically from
-          > the latest commit on `main`.
+          > ⚠️ This is a pre-release built automatically from the latest commit on `main`.
           > For stable builds use a stable release.
 
           ### Install
