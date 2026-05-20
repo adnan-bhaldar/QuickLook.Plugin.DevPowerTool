@@ -123,22 +123,16 @@ jobs:
           python3 -c "
           import subprocess
 
-          # 1. Get the commit subject line
           subject = subprocess.check_output(
               ['git', 'log', '-1', '--pretty=format:%s']
           ).decode().strip()
 
-          # 2. Get the commit body (if any)
           body = subprocess.check_output(
               ['git', 'log', '-1', '--pretty=format:%b']
           ).decode().strip()
 
-          # 3. Join them seamlessly: Only add a newline if body actually contains text
-          msg = subject
-          if body:
-              msg += '\n\n' + body
+          msg = subject + ('\n' + body if body else '')
 
-          # 4. Build your final release notes template
           notes = '''{}
 
           > ⚠️ This is a pre-release built automatically from the latest commit on `main`.
