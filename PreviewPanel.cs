@@ -1,5 +1,7 @@
 // ============================================================
 // QuickLook.Plugin.DevPowerTool — PreviewPanel.cs
+// Uses RichTextBox + FlowDocument for guaranteed text visibility.
+// Inline colour swatches via InlineUIContainer.
 // ============================================================
 
 using System;
@@ -9,14 +11,11 @@ using System.Text;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Shapes;
-using ICSharpCode.AvalonEdit;
-using ICSharpCode.AvalonEdit.Document;
-using ICSharpCode.AvalonEdit.Highlighting;
-using ICSharpCode.AvalonEdit.Rendering;
 using Microsoft.Win32;
 
 namespace QuickLook.Plugin.DevPowerTool
@@ -33,13 +32,13 @@ namespace QuickLook.Plugin.DevPowerTool
         private List<EnvLine> _envLines;
         private bool          _revealed = false;
 
-        private TextEditor _editor;
-        private TextBlock  _swatchCountText;
-        private Border     _swatchCountOverlay;
-        private Border     _toggleTrack;
-        private Ellipse    _toggleThumb;
-        private TextBlock  _toggleLabel;
-        private bool       _toggleAnimating = false;
+        private RichTextBox _textBox;
+        private TextBlock   _swatchCountText;
+        private Border      _swatchCountOverlay;
+        private Border      _toggleTrack;
+        private Ellipse     _toggleThumb;
+        private TextBlock   _toggleLabel;
+        private bool        _toggleAnimating = false;
 
         private static readonly Color _trackOff = Color.FromRgb(0x78, 0x78, 0x80);
         private static readonly Color _trackOn  = Color.FromRgb(0x34, 0xC7, 0x59);
@@ -49,11 +48,17 @@ namespace QuickLook.Plugin.DevPowerTool
         private const double ThumbOffX = 2;
         private const double ThumbOnX  = TrackW - ThumbSz - 2;
 
+        // Cached colours
+        private Color _fgColor;
+        private Color _bgColor;
+
         public PreviewPanel(string path, DevFileType fileType)
         {
             _path     = path;
             _fileType = fileType;
             _isDark   = IsSystemDarkTheme();
+            _bgColor  = _isDark ? Color.FromRgb(0x1E, 0x1E, 0x1E) : Colors.White;
+            _fgColor  = _isDark ? Color.FromRgb(0xD4, 0xD4, 0xD4) : Color.FromRgb(0x1E, 0x1E, 0x1E);
 
             Build();
             Loaded += async (s, e) => await LoadAsync();
@@ -61,9 +66,32 @@ namespace QuickLook.Plugin.DevPowerTool
 
         private void Build()
         {
-            _editor = BuildEditor();
+            _textBox = new RichTextBox
+            {
+                IsReadOnly            = true,
+                FontFamily            = new FontFamily("Cascadia Code, Consolas, Courier New, monospace"),
+                FontSize              = 14,
+                Background            = new SolidColorBrush(_bgColor),
+                Foreground            = new SolidColorBrush(_fgColor),
+                BorderThickness       = new Thickness(0),
+                Padding               = new Thickness(10),
+                VerticalScrollBarVisibility   = ScrollBarVisibility.Auto,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+                Document = new FlowDocument
+                {
+                    FontFamily            = new FontFamily("Cascadia Code, Consolas, Courier New, monospace"),
+                    FontSize              = 14,
+                    PagePadding           = new Thickness(10),
+                    Background            = new SolidColorBrush(_bgColor),
+                    Foreground            = new SolidColorBrush(_fgColor),
+                    LineHeight            = 20,
+                    IsColumnWidthFlexible = false,
+                    ColumnWidth           = double.MaxValue
+                }
+            };
+
             var grid = new Grid();
-            grid.Children.Add(_editor);
+            grid.Children.Add(_textBox);
 
             if (_fileType == DevFileType.EnvFile)
                 grid.Children.Add(BuildToggleOverlay());
@@ -71,44 +99,6 @@ namespace QuickLook.Plugin.DevPowerTool
                 grid.Children.Add(BuildSwatchOverlay());
 
             Content = grid;
-        }
-
-        private TextEditor BuildEditor()
-        {
-            var bgColor = _isDark ? Color.FromRgb(0x1E, 0x1E, 0x1E) : Colors.White;
-            var fgColor = _isDark ? Color.FromRgb(0xD4, 0xD4, 0xD4) : Color.FromRgb(0x1E, 0x1E, 0x1E);
-            var lnColor = _isDark ? Color.FromRgb(0x85, 0x85, 0x85) : Color.FromRgb(0xA0, 0xA0, 0xA0);
-
-            var ed = new TextEditor
-            {
-                IsReadOnly                    = true,
-                ShowLineNumbers               = true,
-                FontFamily                    = new FontFamily("Cascadia Code, Consolas, Courier New, monospace"),
-                FontSize                      = 14,
-                WordWrap                      = false,
-                Background                    = new SolidColorBrush(bgColor),
-                Foreground                    = new SolidColorBrush(fgColor),
-                LineNumbersForeground         = new SolidColorBrush(lnColor),
-                HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
-                VerticalScrollBarVisibility   = ScrollBarVisibility.Auto,
-                Options = new TextEditorOptions
-                {
-                    EnableHyperlinks            = false,
-                    EnableEmailHyperlinks       = false,
-                    ShowBoxForControlCharacters = true,
-                    ConvertTabsToSpaces         = false,
-                    IndentationSize             = 4
-                }
-            };
-
-            // Force text color using a simple IHighlighter that returns our foreground
-            // This is the correct AvalonEdit way to control text color
-            ed.TextArea.TextView.LineTransformers.Add(
-                new ForegroundColorizer(new SolidColorBrush(fgColor)));
-
-            ed.TextArea.Background = new SolidColorBrush(bgColor);
-
-            return ed;
         }
 
         private Border BuildSwatchOverlay()
@@ -136,7 +126,7 @@ namespace QuickLook.Plugin.DevPowerTool
                 Padding             = new Thickness(8, 3, 8, 3),
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment   = VerticalAlignment.Bottom,
-                Margin              = new Thickness(52, 0, 0, 8),
+                Margin              = new Thickness(10, 0, 0, 8),
                 Visibility          = Visibility.Collapsed
             };
 
@@ -164,10 +154,7 @@ namespace QuickLook.Plugin.DevPowerTool
                 Margin              = new Thickness(ThumbOffX, 0, 0, 0),
                 Effect              = new System.Windows.Media.Effects.DropShadowEffect
                 {
-                    Color       = Colors.Black,
-                    Opacity     = 0.3,
-                    BlurRadius  = 4,
-                    ShadowDepth = 1
+                    Color = Colors.Black, Opacity = 0.3, BlurRadius = 4, ShadowDepth = 1
                 }
             };
 
@@ -180,7 +167,7 @@ namespace QuickLook.Plugin.DevPowerTool
                 Foreground          = new SolidColorBrush(_isDark
                     ? Color.FromRgb(0x99, 0x99, 0x99)
                     : Color.FromRgb(0x66, 0x66, 0x66)),
-                Margin              = new Thickness(0, 4, 0, 0)
+                Margin = new Thickness(0, 4, 0, 0)
             };
 
             var trackGrid = new Grid { Width = TrackW, Height = TrackH };
@@ -207,8 +194,8 @@ namespace QuickLook.Plugin.DevPowerTool
                 Background          = new SolidColorBrush(_isDark
                     ? Color.FromArgb(180, 30, 30, 30)
                     : Color.FromArgb(180, 240, 240, 240)),
-                CornerRadius        = new CornerRadius(8),
-                Padding             = new Thickness(8, 6, 8, 6)
+                CornerRadius = new CornerRadius(8),
+                Padding      = new Thickness(8, 6, 8, 6)
             };
         }
 
@@ -278,9 +265,7 @@ namespace QuickLook.Plugin.DevPowerTool
                     string text = Truncate(raw, MaxLines, out truncated);
                     if (truncated)
                         text += string.Format("\n\n// [Preview truncated at {0} lines]", MaxLines);
-
-                    _editor.Text = text;
-                    await ScanAndDrawSwatchesAsync(text);
+                    RenderText(text);
                 }
             }
             catch (Exception ex)
@@ -289,48 +274,127 @@ namespace QuickLook.Plugin.DevPowerTool
             }
         }
 
-        private async Task ScanAndDrawSwatchesAsync(string text)
+        private void RenderText(string text)
         {
-            var swatches = new List<SwatchInfo>();
-            var lines    = text.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None);
-            int total    = 0;
+            var doc   = _textBox.Document;
+            var lines = text.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None);
+            int total = 0;
 
-            await Task.Run(() =>
+            doc.Blocks.Clear();
+
+            foreach (var line in lines)
             {
-                for (int i = 0; i < lines.Length; i++)
+                var para   = new Paragraph { Margin = new Thickness(0), LineHeight = 20 };
+                var tokens = ColorParser.ParseLine(line);
+
+                if (tokens.Count == 0)
                 {
-                    foreach (var token in ColorParser.ParseLine(lines[i]))
-                    {
-                        if (!token.Color.HasValue) continue;
-                        swatches.Add(new SwatchInfo
-                        {
-                            Line        = i + 1,
-                            CharOffset  = token.Index,
-                            TokenLength = token.Raw.Length,
-                            Color       = token.Color.Value
-                        });
-                        total++;
-                    }
+                    para.Inlines.Add(MakeRun(line, _fgColor));
                 }
-            });
+                else
+                {
+                    int cursor = 0;
+                    foreach (var token in tokens)
+                    {
+                        if (token.Index > cursor)
+                            para.Inlines.Add(MakeRun(line.Substring(cursor, token.Index - cursor), _fgColor));
 
-            if (total == 0) return;
+                        if (token.Color.HasValue)
+                        {
+                            para.Inlines.Add(MakeSwatch(token.Color.Value));
+                            total++;
+                        }
 
-            var renderer = new ColorSwatchRenderer(_editor, swatches);
-            _editor.TextArea.TextView.BackgroundRenderers.Add(renderer);
-            _editor.TextArea.TextView.InvalidateLayer(KnownLayer.Text);
+                        para.Inlines.Add(MakeRun(token.Raw, _fgColor));
+                        cursor = token.Index + token.Raw.Length;
+                    }
 
-            _swatchCountText.Text          = string.Format("  {0} colour{1}", total, total == 1 ? "" : "s");
-            _swatchCountOverlay.Visibility = Visibility.Visible;
+                    if (cursor < line.Length)
+                        para.Inlines.Add(MakeRun(line.Substring(cursor), _fgColor));
+                }
+
+                doc.Blocks.Add(para);
+            }
+
+            if (total > 0)
+            {
+                _swatchCountText.Text          = string.Format("  {0} colour{1}", total, total == 1 ? "" : "s");
+                _swatchCountOverlay.Visibility = Visibility.Visible;
+            }
         }
 
         private void RenderEnv()
         {
             if (_envLines == null) return;
-            var sb = new StringBuilder();
+
+            var commentColor = _isDark ? Color.FromRgb(0x6C, 0x70, 0x86) : Color.FromRgb(0x90, 0x94, 0xA5);
+            var keyColor     = _isDark ? Color.FromRgb(0x89, 0xB4, 0xFA) : Color.FromRgb(0x19, 0x5F, 0xBB);
+            var maskedColor  = _isDark ? Color.FromRgb(0x58, 0x5B, 0x70) : Color.FromRgb(0xAA, 0xAA, 0xBB);
+            var valueColor   = _isDark ? Color.FromRgb(0xA6, 0xE3, 0xA1) : Color.FromRgb(0x2E, 0x7D, 0x32);
+
+            var doc = _textBox.Document;
+            doc.Blocks.Clear();
+
             foreach (var line in _envLines)
-                sb.AppendLine(line.DisplayText(_revealed));
-            _editor.Text = sb.ToString();
+            {
+                var para = new Paragraph { Margin = new Thickness(0), LineHeight = 20 };
+
+                if (!line.HasSecret)
+                {
+                    // Comment, blank, or unrecognised — show as-is
+                    para.Inlines.Add(MakeRun(line.Raw, commentColor));
+                }
+                else if (_revealed)
+                {
+                    // Revealed: show original raw line coloured by parts
+                    // Prefix contains "KEY=" — split at = sign
+                    var eqIdx = (line.Prefix ?? "").Length;
+                    var raw   = line.Raw ?? "";
+                    // Show prefix (key + equals) in key colour, value in value colour
+                    if (eqIdx > 0 && eqIdx <= raw.Length)
+                    {
+                        para.Inlines.Add(new Run(raw.Substring(0, eqIdx))
+                            { Foreground = new SolidColorBrush(keyColor), FontWeight = FontWeights.SemiBold });
+                        para.Inlines.Add(MakeRun(raw.Substring(eqIdx), valueColor));
+                    }
+                    else
+                    {
+                        para.Inlines.Add(MakeRun(raw, _fgColor));
+                    }
+                }
+                else
+                {
+                    // Masked: show prefix + asterisks
+                    string mask = new string('*', Math.Max(8, line.Value == null ? 8 : line.Value.Length));
+                    para.Inlines.Add(new Run(line.Prefix ?? "")
+                        { Foreground = new SolidColorBrush(keyColor), FontWeight = FontWeights.SemiBold });
+                    para.Inlines.Add(MakeRun(mask, maskedColor));
+                }
+
+                doc.Blocks.Add(para);
+            }
+        }
+
+        private static Run MakeRun(string text, Color color)
+        {
+            return new Run(text) { Foreground = new SolidColorBrush(color) };
+        }
+
+        private static InlineUIContainer MakeSwatch(Color color)
+        {
+            bool dark = (0.299 * color.R + 0.587 * color.G + 0.114 * color.B) < 128;
+            return new InlineUIContainer(new Border
+            {
+                Width           = 10,
+                Height          = 10,
+                Background      = new SolidColorBrush(color),
+                BorderBrush     = new SolidColorBrush(dark
+                    ? Color.FromArgb(80, 255, 255, 255)
+                    : Color.FromArgb(80, 0, 0, 0)),
+                BorderThickness = new Thickness(0.8),
+                CornerRadius    = new CornerRadius(2),
+                Margin          = new Thickness(0, 0, 2, -1)
+            });
         }
 
         private static string ReadFile(string path)
@@ -349,9 +413,14 @@ namespace QuickLook.Plugin.DevPowerTool
 
         private void SetText(string msg)
         {
-            _editor.IsReadOnly = false;
-            _editor.Text       = msg;
-            _editor.IsReadOnly = true;
+            var doc = _textBox.Document;
+            doc.Blocks.Clear();
+            doc.Blocks.Add(new Paragraph(new Run(msg)
+            {
+                Foreground = new SolidColorBrush(_isDark
+                    ? Color.FromRgb(0xF3, 0x8B, 0xA8)
+                    : Color.FromRgb(0xCC, 0x00, 0x00))
+            }));
         }
 
         private static bool IsSystemDarkTheme()
@@ -368,21 +437,6 @@ namespace QuickLook.Plugin.DevPowerTool
             }
             catch { }
             return false;
-        }
-    }
-
-    // Forces foreground colour on all text runs via AvalonEdit's line transformer
-    internal sealed class ForegroundColorizer : DocumentColorizingTransformer
-    {
-        private readonly Brush _brush;
-        public ForegroundColorizer(Brush brush) { _brush = brush; }
-
-        protected override void ColorizeLine(DocumentLine line)
-        {
-            ChangeLinePart(line.Offset, line.EndOffset, element =>
-            {
-                element.TextRunProperties.SetForegroundBrush(_brush);
-            });
         }
     }
 }
