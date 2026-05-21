@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <!-- QuickLook.Plugin.DevPowerTool — QuickLook.Plugin.DevPowerTool.csproj
-    Uses AvalonEdit — same editor as QuickLook's built-in TextViewer.
-    All UI is pure code-behind (no .xaml files). -->
+    Uses AvalonEdit same as QuickLook TextViewer. -->
 <Project Sdk="Microsoft.NET.Sdk">
     <PropertyGroup>
         <OutputType>Library</OutputType>
@@ -30,7 +29,7 @@
         <OutputPath>bin\Release\</OutputPath>
         <DefineConstants>TRACE</DefineConstants>
     </PropertyGroup>
-    <!-- Exclude XAML files if they still exist on disk from old version -->
+    <!-- Exclude old XAML files if they still exist on disk -->
     <ItemGroup>
         <Page Remove="PreviewPanel.xaml" />
         <Page Remove="ErrorPanel.xaml" />
@@ -38,19 +37,19 @@
         <Compile Remove="ErrorPanel.xaml.cs" />
         <Compile Remove="Helpers\PreviewRenderer.cs" />
     </ItemGroup>
-    <!-- AvalonEdit: same editor used by QuickLook's built-in TextViewer -->
-    <!-- <ItemGroup>
+    <!-- AvalonEdit — same as QuickLook TextViewer -->
+    <ItemGroup>
         <PackageReference Include="AvalonEdit" Version="6.3.0.90" />
-    </ItemGroup> -->
-    <!-- Plugin metadata: copied to output directory so QuickLook finds us -->
+    </ItemGroup>
+    <!-- Plugin metadata -->
     <ItemGroup>
         <None Include="QuickLook.Plugin.Metadata.Base.config" />
         <None Include="QuickLook.Plugin.Metadata.config">
             <CopyToOutputDirectory>Always</CopyToOutputDirectory>
         </None>
     </ItemGroup>
-    <!-- QuickLook.Common via NuGet (submodule no longer needed) -->
+    <!-- QuickLook.Common via NuGet -->
     <ItemGroup>
-        <PackageReference Include="QuickLook.Common" Version="*" />
+        <PackageReference Include="QuickLook.Common" Version="4.5.0" />
     </ItemGroup>
 </Project>

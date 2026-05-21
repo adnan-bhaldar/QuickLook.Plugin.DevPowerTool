@@ -1,7 +1,9 @@
 // ============================================================
 // QuickLook.Plugin.DevPowerTool — PreviewPanel.cs
-// Uses RichTextBox + FlowDocument for guaranteed text visibility.
-// Inline colour swatches via InlineUIContainer.
+//
+// Uses AvalonEdit TextEditor exactly like QuickLook TextViewer.
+// Text colour is forced via a custom IHighlightingDefinition
+// that sets the default colour — the correct AvalonEdit way.
 // ============================================================
 
 using System;
@@ -11,11 +13,14 @@ using System.Text;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Shapes;
+using ICSharpCode.AvalonEdit;
+using ICSharpCode.AvalonEdit.Document;
+using ICSharpCode.AvalonEdit.Highlighting;
+using ICSharpCode.AvalonEdit.Rendering;
 using Microsoft.Win32;
 
 namespace QuickLook.Plugin.DevPowerTool
@@ -32,7 +37,7 @@ namespace QuickLook.Plugin.DevPowerTool
         private List<EnvLine> _envLines;
         private bool          _revealed = false;
 
-        private RichTextBox _textBox;
+        private TextEditor  _editor;
         private TextBlock   _swatchCountText;
         private Border      _swatchCountOverlay;
         private Border      _toggleTrack;
@@ -48,7 +53,6 @@ namespace QuickLook.Plugin.DevPowerTool
         private const double ThumbOffX = 2;
         private const double ThumbOnX  = TrackW - ThumbSz - 2;
 
-        // Cached colours
         private Color _fgColor;
         private Color _bgColor;
 
@@ -66,32 +70,9 @@ namespace QuickLook.Plugin.DevPowerTool
 
         private void Build()
         {
-            _textBox = new RichTextBox
-            {
-                IsReadOnly            = true,
-                FontFamily            = new FontFamily("Cascadia Code, Consolas, Courier New, monospace"),
-                FontSize              = 14,
-                Background            = new SolidColorBrush(_bgColor),
-                Foreground            = new SolidColorBrush(_fgColor),
-                BorderThickness       = new Thickness(0),
-                Padding               = new Thickness(10),
-                VerticalScrollBarVisibility   = ScrollBarVisibility.Auto,
-                HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
-                Document = new FlowDocument
-                {
-                    FontFamily            = new FontFamily("Cascadia Code, Consolas, Courier New, monospace"),
-                    FontSize              = 14,
-                    PagePadding           = new Thickness(10),
-                    Background            = new SolidColorBrush(_bgColor),
-                    Foreground            = new SolidColorBrush(_fgColor),
-                    LineHeight            = 20,
-                    IsColumnWidthFlexible = false,
-                    ColumnWidth           = double.MaxValue
-                }
-            };
-
+            _editor = BuildEditor();
             var grid = new Grid();
-            grid.Children.Add(_textBox);
+            grid.Children.Add(_editor);
 
             if (_fileType == DevFileType.EnvFile)
                 grid.Children.Add(BuildToggleOverlay());
@@ -100,6 +81,42 @@ namespace QuickLook.Plugin.DevPowerTool
 
             Content = grid;
         }
+
+        // ── AvalonEdit setup — identical to TextViewer ────────────────────
+
+        private TextEditor BuildEditor()
+        {
+            var ed = new TextEditor
+            {
+                IsReadOnly                    = true,
+                ShowLineNumbers               = true,
+                FontFamily                    = new FontFamily("Cascadia Code, Consolas, Courier New, monospace"),
+                FontSize                      = 14,
+                WordWrap                      = false,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+                VerticalScrollBarVisibility   = ScrollBarVisibility.Auto,
+                Options = new TextEditorOptions
+                {
+                    EnableHyperlinks            = false,
+                    EnableEmailHyperlinks       = false,
+                    ShowBoxForControlCharacters = true,
+                    ConvertTabsToSpaces         = false,
+                    IndentationSize             = 4
+                }
+            };
+
+            ed.Background            = new SolidColorBrush(_bgColor);
+            ed.LineNumbersForeground = new SolidColorBrush(
+                _isDark ? Color.FromRgb(0x85, 0x85, 0x85) : Color.FromRgb(0xA0, 0xA0, 0xA0));
+
+            // Use a simple custom highlighting that only sets the default text colour.
+            // This is how TextViewer controls text colour in AvalonEdit.
+            ed.SyntaxHighlighting = new PlainTextHighlighting(_fgColor, _bgColor);
+
+            return ed;
+        }
+
+        // ── Swatch overlay ────────────────────────────────────────────────
 
         private Border BuildSwatchOverlay()
         {
@@ -126,12 +143,14 @@ namespace QuickLook.Plugin.DevPowerTool
                 Padding             = new Thickness(8, 3, 8, 3),
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment   = VerticalAlignment.Bottom,
-                Margin              = new Thickness(10, 0, 0, 8),
+                Margin              = new Thickness(52, 0, 0, 8),
                 Visibility          = Visibility.Collapsed
             };
 
             return _swatchCountOverlay;
         }
+
+        // ── iOS toggle ────────────────────────────────────────────────────
 
         private UIElement BuildToggleOverlay()
         {
@@ -225,20 +244,22 @@ namespace QuickLook.Plugin.DevPowerTool
             double toX   = on ? ThumbOnX  : ThumbOffX;
             _toggleThumb.Margin = new Thickness(fromX, 0, 0, 0);
 
-            var thumbAnim = new ThicknessAnimation
+            var anim = new ThicknessAnimation
             {
                 From           = new Thickness(fromX, 0, 0, 0),
                 To             = new Thickness(toX,   0, 0, 0),
                 Duration       = TimeSpan.FromMilliseconds(200),
                 EasingFunction = new CubicEase { EasingMode = EasingMode.EaseInOut }
             };
-            thumbAnim.Completed += (s, e) =>
+            anim.Completed += (s, e) =>
             {
                 _toggleThumb.Margin = new Thickness(toX, 0, 0, 0);
                 _toggleAnimating    = false;
             };
-            _toggleThumb.BeginAnimation(MarginProperty, thumbAnim);
+            _toggleThumb.BeginAnimation(MarginProperty, anim);
         }
+
+        // ── File loading ──────────────────────────────────────────────────
 
         private async Task LoadAsync()
         {
@@ -247,7 +268,7 @@ namespace QuickLook.Plugin.DevPowerTool
                 var info = new FileInfo(_path);
                 if (info.Length > MaxBytes)
                 {
-                    SetText(string.Format("[File too large: {0:N0} KB. Limit is {1:N0} KB]",
+                    SetEditorText(string.Format("[File too large: {0:N0} KB. Limit is {1:N0} KB]",
                         info.Length / 1024, MaxBytes / 1024));
                     return;
                 }
@@ -265,137 +286,66 @@ namespace QuickLook.Plugin.DevPowerTool
                     string text = Truncate(raw, MaxLines, out truncated);
                     if (truncated)
                         text += string.Format("\n\n// [Preview truncated at {0} lines]", MaxLines);
-                    RenderText(text);
+
+                    _editor.Text = text;
+                    await ScanSwatchesAsync(text);
                 }
             }
             catch (Exception ex)
             {
-                SetText("Could not load file:\n" + ex.Message);
+                SetEditorText("Could not load file:\n" + ex.Message);
             }
         }
 
-        private void RenderText(string text)
+        // ── Colour swatch scanning ────────────────────────────────────────
+
+        private async Task ScanSwatchesAsync(string text)
         {
-            var doc   = _textBox.Document;
-            var lines = text.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None);
-            int total = 0;
+            var swatches = new List<SwatchInfo>();
+            var lines    = text.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None);
+            int total    = 0;
 
-            doc.Blocks.Clear();
-
-            foreach (var line in lines)
+            await Task.Run(() =>
             {
-                var para   = new Paragraph { Margin = new Thickness(0), LineHeight = 20 };
-                var tokens = ColorParser.ParseLine(line);
-
-                if (tokens.Count == 0)
+                for (int i = 0; i < lines.Length; i++)
                 {
-                    para.Inlines.Add(MakeRun(line, _fgColor));
-                }
-                else
-                {
-                    int cursor = 0;
-                    foreach (var token in tokens)
+                    foreach (var token in ColorParser.ParseLine(lines[i]))
                     {
-                        if (token.Index > cursor)
-                            para.Inlines.Add(MakeRun(line.Substring(cursor, token.Index - cursor), _fgColor));
-
-                        if (token.Color.HasValue)
+                        if (!token.Color.HasValue) continue;
+                        swatches.Add(new SwatchInfo
                         {
-                            para.Inlines.Add(MakeSwatch(token.Color.Value));
-                            total++;
-                        }
-
-                        para.Inlines.Add(MakeRun(token.Raw, _fgColor));
-                        cursor = token.Index + token.Raw.Length;
+                            Line        = i + 1,
+                            CharOffset  = token.Index,
+                            TokenLength = token.Raw.Length,
+                            Color       = token.Color.Value
+                        });
+                        total++;
                     }
-
-                    if (cursor < line.Length)
-                        para.Inlines.Add(MakeRun(line.Substring(cursor), _fgColor));
                 }
+            });
 
-                doc.Blocks.Add(para);
-            }
+            if (total == 0) return;
 
-            if (total > 0)
-            {
-                _swatchCountText.Text          = string.Format("  {0} colour{1}", total, total == 1 ? "" : "s");
-                _swatchCountOverlay.Visibility = Visibility.Visible;
-            }
+            var renderer = new ColorSwatchRenderer(_editor, swatches);
+            _editor.TextArea.TextView.BackgroundRenderers.Add(renderer);
+            _editor.TextArea.TextView.InvalidateLayer(KnownLayer.Background);
+
+            _swatchCountText.Text          = string.Format("  {0} colour{1}", total, total == 1 ? "" : "s");
+            _swatchCountOverlay.Visibility = Visibility.Visible;
         }
+
+        // ── Env rendering ─────────────────────────────────────────────────
 
         private void RenderEnv()
         {
             if (_envLines == null) return;
-
-            var commentColor = _isDark ? Color.FromRgb(0x6C, 0x70, 0x86) : Color.FromRgb(0x90, 0x94, 0xA5);
-            var keyColor     = _isDark ? Color.FromRgb(0x89, 0xB4, 0xFA) : Color.FromRgb(0x19, 0x5F, 0xBB);
-            var maskedColor  = _isDark ? Color.FromRgb(0x58, 0x5B, 0x70) : Color.FromRgb(0xAA, 0xAA, 0xBB);
-            var valueColor   = _isDark ? Color.FromRgb(0xA6, 0xE3, 0xA1) : Color.FromRgb(0x2E, 0x7D, 0x32);
-
-            var doc = _textBox.Document;
-            doc.Blocks.Clear();
-
+            var sb = new StringBuilder();
             foreach (var line in _envLines)
-            {
-                var para = new Paragraph { Margin = new Thickness(0), LineHeight = 20 };
-
-                if (!line.HasSecret)
-                {
-                    // Comment, blank, or unrecognised — show as-is
-                    para.Inlines.Add(MakeRun(line.Raw, commentColor));
-                }
-                else if (_revealed)
-                {
-                    // Revealed: show original raw line coloured by parts
-                    // Prefix contains "KEY=" — split at = sign
-                    var eqIdx = (line.Prefix ?? "").Length;
-                    var raw   = line.Raw ?? "";
-                    // Show prefix (key + equals) in key colour, value in value colour
-                    if (eqIdx > 0 && eqIdx <= raw.Length)
-                    {
-                        para.Inlines.Add(new Run(raw.Substring(0, eqIdx))
-                            { Foreground = new SolidColorBrush(keyColor), FontWeight = FontWeights.SemiBold });
-                        para.Inlines.Add(MakeRun(raw.Substring(eqIdx), valueColor));
-                    }
-                    else
-                    {
-                        para.Inlines.Add(MakeRun(raw, _fgColor));
-                    }
-                }
-                else
-                {
-                    // Masked: show prefix + asterisks
-                    string mask = new string('*', Math.Max(8, line.Value == null ? 8 : line.Value.Length));
-                    para.Inlines.Add(new Run(line.Prefix ?? "")
-                        { Foreground = new SolidColorBrush(keyColor), FontWeight = FontWeights.SemiBold });
-                    para.Inlines.Add(MakeRun(mask, maskedColor));
-                }
-
-                doc.Blocks.Add(para);
-            }
+                sb.AppendLine(line.DisplayText(_revealed));
+            _editor.Text = sb.ToString();
         }
 
-        private static Run MakeRun(string text, Color color)
-        {
-            return new Run(text) { Foreground = new SolidColorBrush(color) };
-        }
-
-        private static InlineUIContainer MakeSwatch(Color color)
-        {
-            bool dark = (0.299 * color.R + 0.587 * color.G + 0.114 * color.B) < 128;
-            return new InlineUIContainer(new Border
-            {
-                Width           = 10,
-                Height          = 10,
-                Background      = new SolidColorBrush(color),
-                BorderBrush     = new SolidColorBrush(dark
-                    ? Color.FromArgb(80, 255, 255, 255)
-                    : Color.FromArgb(80, 0, 0, 0)),
-                BorderThickness = new Thickness(0.8),
-                CornerRadius    = new CornerRadius(2),
-                Margin          = new Thickness(0, 0, 2, -1)
-            });
-        }
+        // ── Utilities ─────────────────────────────────────────────────────
 
         private static string ReadFile(string path)
         {
@@ -411,16 +361,11 @@ namespace QuickLook.Plugin.DevPowerTool
             return string.Join("\n", lines, 0, maxLines);
         }
 
-        private void SetText(string msg)
+        private void SetEditorText(string msg)
         {
-            var doc = _textBox.Document;
-            doc.Blocks.Clear();
-            doc.Blocks.Add(new Paragraph(new Run(msg)
-            {
-                Foreground = new SolidColorBrush(_isDark
-                    ? Color.FromRgb(0xF3, 0x8B, 0xA8)
-                    : Color.FromRgb(0xCC, 0x00, 0x00))
-            }));
+            _editor.IsReadOnly = false;
+            _editor.Text       = msg;
+            _editor.IsReadOnly = true;
         }
 
         private static bool IsSystemDarkTheme()
@@ -438,5 +383,54 @@ namespace QuickLook.Plugin.DevPowerTool
             catch { }
             return false;
         }
+    }
+
+    // ── PlainTextHighlighting ─────────────────────────────────────────────
+    // A minimal IHighlightingDefinition that only sets the default text
+    // colour. This is the correct way to control text colour in AvalonEdit —
+    // the Foreground property on TextEditor is ignored by the renderer.
+
+    internal sealed class PlainTextHighlighting : IHighlightingDefinition
+    {
+        private readonly HighlightingColor _defaultColor;
+
+        public PlainTextHighlighting(Color foreground, Color background)
+        {
+            _defaultColor = new HighlightingColor
+            {
+                Foreground = new SimpleHighlightingBrush(foreground),
+                Background = new SimpleHighlightingBrush(background)
+            };
+        }
+
+        public string Name => "PlainText";
+
+        public HighlightingRuleSet MainRuleSet => new HighlightingRuleSet();
+
+        public HighlightingColor GetNamedColor(string name) => null;
+
+        public IEnumerable<HighlightingColor> NamedHighlightingColors
+            => new List<HighlightingColor>();
+
+        public IDictionary<string, string> Properties
+            => new System.Collections.Generic.Dictionary<string, string>();
+
+        // This is what actually sets the default text colour in AvalonEdit
+        public HighlightingColor DefaultColor => _defaultColor;
+    }
+
+    internal sealed class SimpleHighlightingBrush : HighlightingBrush
+    {
+        private readonly SolidColorBrush _brush;
+
+        public SimpleHighlightingBrush(Color color)
+        {
+            _brush = new SolidColorBrush(color);
+            _brush.Freeze();
+        }
+
+        public override Brush GetBrush(ITextRunConstructionContext context) => _brush;
+
+        public override string ToString() => _brush.Color.ToString();
     }
 }
