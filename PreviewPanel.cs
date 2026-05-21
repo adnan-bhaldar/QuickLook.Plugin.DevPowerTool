@@ -407,6 +407,8 @@ namespace QuickLook.Plugin.DevPowerTool
 
         public HighlightingRuleSet MainRuleSet => new HighlightingRuleSet();
 
+        public HighlightingRuleSet GetNamedRuleSet(string name) => null;
+
         public HighlightingColor GetNamedColor(string name) => null;
 
         public IEnumerable<HighlightingColor> NamedHighlightingColors
