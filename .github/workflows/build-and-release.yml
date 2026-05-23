@@ -67,35 +67,25 @@ jobs:
         run: |
           $BinDir  = "bin\Release"
           $OutFile = "QuickLook.Plugin.DevPowerTool.qlplugin"
-          $TempDir = New-Item `
-            -ItemType Directory `
-            -Path "$env:TEMP\ql_pack" `
-            -Force
+          $TempDir = New-Item -ItemType Directory -Path "$env:TEMP\ql_pack" -Force
 
-          Copy-Item `
-            "$BinDir\QuickLook.Plugin.DevPowerTool.dll" `
-            -Destination $TempDir
+          Write-Host "=== Contents of $BinDir ==="
+          Get-ChildItem $BinDir | Select-Object Name, Length
 
-          Copy-Item `
-            "$BinDir\QuickLook.Plugin.Metadata.config" `
-            -Destination $TempDir
+          Copy-Item "$BinDir\QuickLook.Plugin.DevPowerTool.dll" -Destination $TempDir -ErrorAction Stop
+          Copy-Item "$BinDir\QuickLook.Plugin.Metadata.config"  -Destination $TempDir -ErrorAction Stop
+          Copy-Item "$BinDir\ICSharpCode.AvalonEdit.dll"        -Destination $TempDir -ErrorAction Stop
 
-          Copy-Item `
-            "$BinDir\ICSharpCode.AvalonEdit.dll" `
-            -Destination $TempDir
+          Write-Host "=== Contents of package ==="
+          Get-ChildItem $TempDir | Select-Object Name, Length
 
-          Compress-Archive `
-            -Path "$TempDir\*" `
-            -DestinationPath $OutFile `
-            -Force
-
+          Compress-Archive -Path "$TempDir\*" -DestinationPath $OutFile -Force
           Write-Host "Packaged: $OutFile"
-
-      - name: Upload build artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: QuickLook.Plugin.DevPowerTool
-          path: QuickLook.Plugin.DevPowerTool.qlplugin
+            - name: Upload build artifact
+              uses: actions/upload-artifact@v4
+              with:
+                name: QuickLook.Plugin.DevPowerTool
+                path: QuickLook.Plugin.DevPowerTool.qlplugin
 
   # ───────────────────────────────────────────────────────────
   # JOB 2 — Publish pre-release (main branch only)
