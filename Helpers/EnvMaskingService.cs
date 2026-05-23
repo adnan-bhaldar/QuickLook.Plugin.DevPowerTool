@@ -1,117 +1,166 @@
 // ============================================================
 // QuickLook.Plugin.DevPowerTool — Helpers/EnvMaskingService.cs
 //
-// Parses .env files and provides masked / revealed line views.
-// Never touches the original file on disk.
+// Pure parser for .env files.
+// Converts raw .env text into a list of EnvLine objects.
+// No I/O, no side effects, no file access.
 //
-// Masking rules:
-//   - Active assignments:   KEY=value       → KEY=********
-//   - Commented assignments: # KEY=value    → # KEY=********
-//   - Blank lines / pure comments (no =)   → shown as-is
-//   - export KEY=value                      → export KEY=********
+// .env line grammar (subset, matches dotenv convention):
+//   comment line   → starts with optional whitespace then '#'
+//   blank line     → empty or only whitespace
+//   assignment     → KEY=VALUE  or  KEY="VALUE"  or  export KEY=VALUE
+//   continuation   → anything not matching the above → treated as PlainText
 // ============================================================
-
 using System;
 using System.Collections.Generic;
 using System.Text.RegularExpressions;
 
-namespace QuickLook.Plugin.DevPowerTool
+namespace QuickLook.Plugin.DevPowerTool.Helpers
 {
+    /// <summary>Kind of a single line in a .env file.</summary>
+    public enum EnvLineKind
+    {
+        /// <summary>A KEY=VALUE assignment.</summary>
+        Assignment,
+
+        /// <summary>A comment line beginning with #.</summary>
+        Comment,
+
+        /// <summary>A blank or whitespace-only line.</summary>
+        Blank,
+
+        /// <summary>A line that doesn't match any known pattern.</summary>
+        PlainText
+    }
+
+    /// <summary>
+    /// Represents one parsed line from a .env file together with its
+    /// masking / reveal logic.
+    /// </summary>
     public sealed class EnvLine
     {
-        /// <summary>The original raw text of the line.</summary>
+        /// <summary>Original raw text of the line (no newline character).</summary>
         public string Raw { get; set; }
 
-        /// <summary>True when this line contains a KEY=VALUE that should be masked.</summary>
-        public bool HasSecret { get; set; }
+        public EnvLineKind Kind { get; set; }
+
+        /// <summary>Variable name (only set for <see cref="EnvLineKind.Assignment"/>).</summary>
+        public string Key { get; set; }
+
+        /// <summary>Raw value (only set for <see cref="EnvLineKind.Assignment"/>).</summary>
+        public string Value { get; set; }
 
         /// <summary>
-        /// Everything before the value — e.g. "KEY=" or "# KEY=" or "export KEY=".
-        /// Null when HasSecret is false.
+        /// Leading whitespace / "export " prefix before the key, if any.
+        /// Preserved so the original formatting is reconstructed exactly.
         /// </summary>
         public string Prefix { get; set; }
 
-        /// <summary>The real value. Kept in memory only, never written to disk.</summary>
-        public string Value { get; set; }
-
-        /// <summary>Returns the display text for this line given the current reveal state.</summary>
-        public string DisplayText(bool revealed)
+        /// <summary>
+        /// Returns the display text for this line.
+        /// For assignments, the value is either masked or revealed
+        /// based on <paramref name="reveal"/>.
+        /// All other line kinds return their raw text unchanged.
+        /// </summary>
+        public string DisplayText(bool reveal)
         {
-            if (!HasSecret)
+            if (Kind != EnvLineKind.Assignment)
                 return Raw;
 
-            if (revealed)
-                return Raw;
+            var displayValue = reveal ? Value : MaskValue(Value);
+            return Prefix + Key + "=" + displayValue;
+        }
 
-            // Mask the value portion only; preserve prefix (key name, comment marker, etc.)
-            string mask = new string('*', Math.Max(8, Value == null ? 8 : Value.Length));
-            return Prefix + mask;
+        // ── Private helpers ───────────────────────────────────────────────
+
+        private static string MaskValue(string value)
+        {
+            if (string.IsNullOrEmpty(value))
+                return string.Empty;
+
+            // Preserve quotes if value is quoted, masking only the inner content
+            if (value.Length >= 2)
+            {
+                char first = value[0];
+                char last  = value[value.Length - 1];
+
+                if ((first == '"'  && last == '"')  ||
+                    (first == '\'' && last == '\'') ||
+                    (first == '`'  && last == '`'))
+                {
+                    // e.g. "my-secret" → "********"
+                    return first + new string('*', Math.Max(8, value.Length - 2)) + last;
+                }
+            }
+
+            return new string('*', Math.Max(8, value.Length));
         }
     }
 
+    /// <summary>
+    /// Parses raw .env text into a list of <see cref="EnvLine"/> records.
+    /// </summary>
     public static class EnvMaskingService
     {
-        // Matches active assignments: KEY=value or export KEY=value
-        // Captures: Group 1 = everything up to and including "=", Group 2 = value
-        private static readonly Regex ActiveRegex = new Regex(
-            @"^((?:export\s+)?[A-Za-z_][A-Za-z0-9_]*\s*=)(.*)",
+        // Matches: [optional whitespace] [optional "export "] KEY = VALUE
+        // Groups:  1 = prefix (whitespace + "export "), 2 = KEY, 3 = VALUE
+        private static readonly Regex RxAssignment = new Regex(
+            @"^(\s*(?:export\s+)?)([A-Za-z_][A-Za-z0-9_]*)=(.*)$",
             RegexOptions.Compiled);
 
-        // Matches commented-out assignments: # KEY=value or #KEY=value
-        // Captures: Group 1 = everything up to and including "=", Group 2 = value
-        private static readonly Regex CommentedRegex = new Regex(
-            @"^(#\s*[A-Za-z_][A-Za-z0-9_]*\s*=)(.*)",
+        // Comment: optional whitespace then '#'
+        private static readonly Regex RxComment = new Regex(
+            @"^\s*#",
             RegexOptions.Compiled);
 
+        /// <summary>
+        /// Parses <paramref name="rawText"/> and returns one <see cref="EnvLine"/>
+        /// per line.  The original line endings are normalised to \n internally
+        /// but the Raw property stores each line without any trailing newline.
+        /// </summary>
         public static List<EnvLine> Parse(string rawText)
         {
+            if (rawText == null) throw new ArgumentNullException("rawText");
+
             var lines  = rawText.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None);
             var result = new List<EnvLine>(lines.Length);
 
-            foreach (var raw in lines)
+            foreach (var line in lines)
             {
-                var trimmed = raw.Trim();
-
-                // Blank line
-                if (trimmed.Length == 0)
-                {
-                    result.Add(new EnvLine { Raw = raw, HasSecret = false });
-                    continue;
-                }
-
-                // Try active assignment first: KEY=value or export KEY=value
-                var m = ActiveRegex.Match(trimmed);
-                if (m.Success)
-                {
-                    result.Add(new EnvLine
-                    {
-                        Raw       = raw,
-                        HasSecret = true,
-                        Prefix    = m.Groups[1].Value,
-                        Value     = m.Groups[2].Value
-                    });
-                    continue;
-                }
-
-                // Try commented assignment: # KEY=value
-                m = CommentedRegex.Match(trimmed);
-                if (m.Success)
-                {
-                    result.Add(new EnvLine
-                    {
-                        Raw       = raw,
-                        HasSecret = true,
-                        Prefix    = m.Groups[1].Value,
-                        Value     = m.Groups[2].Value
-                    });
-                    continue;
-                }
-
-                // Pure comment or unrecognised line — show as-is
-                result.Add(new EnvLine { Raw = raw, HasSecret = false });
+                result.Add(ParseLine(line));
             }
 
             return result;
+        }
+
+        // ── Private helpers ───────────────────────────────────────────────
+
+        private static EnvLine ParseLine(string line)
+        {
+            // Blank
+            if (string.IsNullOrWhiteSpace(line))
+                return new EnvLine { Raw = line, Kind = EnvLineKind.Blank };
+
+            // Comment
+            if (RxComment.IsMatch(line))
+                return new EnvLine { Raw = line, Kind = EnvLineKind.Comment };
+
+            // Assignment
+            var m = RxAssignment.Match(line);
+            if (m.Success)
+            {
+                return new EnvLine
+                {
+                    Raw    = line,
+                    Kind   = EnvLineKind.Assignment,
+                    Prefix = m.Groups[1].Value,
+                    Key    = m.Groups[2].Value,
+                    Value  = m.Groups[3].Value
+                };
+            }
+
+            // Fallback — plain text (multi-line values, continuation lines, etc.)
+            return new EnvLine { Raw = line, Kind = EnvLineKind.PlainText };
         }
     }
 }

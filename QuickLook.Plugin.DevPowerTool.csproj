@@ -1,6 +1,7 @@
-<?xml version="1.0" encoding="UTF-8" ?>
+<?xml version="1.0" encoding="UTF-8"?>
 <!-- QuickLook.Plugin.DevPowerTool — QuickLook.Plugin.DevPowerTool.csproj
-    Uses AvalonEdit same as QuickLook TextViewer. -->
+     Uses AvalonEdit same as QuickLook TextViewer.
+     QuickLook.Common supplied via NuGet — no git submodule required. -->
 <Project Sdk="Microsoft.NET.Sdk">
     <PropertyGroup>
         <OutputType>Library</OutputType>
@@ -18,6 +19,9 @@
         <DebugType>full</DebugType>
         <Nullable>disable</Nullable>
         <CodeAnalysisRuleSet>MinimumRecommendedRules.ruleset</CodeAnalysisRuleSet>
+        <Version>2.0.0</Version>
+        <Authors>adnan-bhaldar</Authors>
+        <Description>Developer Power-User preview plugin for QuickLook: inline colour swatches and .env privacy masking.</Description>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Configuration)' == 'Debug'">
         <Optimize>false</Optimize>
@@ -29,27 +33,26 @@
         <OutputPath>bin\Release\</OutputPath>
         <DefineConstants>TRACE</DefineConstants>
     </PropertyGroup>
-    <!-- Exclude old XAML files if they still exist on disk -->
-    <ItemGroup>
-        <Page Remove="PreviewPanel.xaml" />
-        <Page Remove="ErrorPanel.xaml" />
-        <Compile Remove="PreviewPanel.xaml.cs" />
-        <Compile Remove="ErrorPanel.xaml.cs" />
-        <Compile Remove="Helpers\PreviewRenderer.cs" />
-    </ItemGroup>
-    <!-- AvalonEdit — same as QuickLook TextViewer -->
+    <!-- AvalonEdit — same version as QuickLook TextViewer -->
     <ItemGroup>
         <PackageReference Include="AvalonEdit" Version="6.3.0.90" />
     </ItemGroup>
-    <!-- Plugin metadata -->
+    <!-- QuickLook.Common via NuGet (replaces git submodule) -->
+    <ItemGroup>
+        <PackageReference Include="QuickLook.Common" Version="4.5.0" />
+    </ItemGroup>
+    <!-- Plugin metadata — config is copied to output so QuickLook can read it -->
     <ItemGroup>
         <None Include="QuickLook.Plugin.Metadata.Base.config" />
         <None Include="QuickLook.Plugin.Metadata.config">
             <CopyToOutputDirectory>Always</CopyToOutputDirectory>
         </None>
     </ItemGroup>
-    <!-- QuickLook.Common via NuGet -->
+    <!-- Compile all .cs files under Helpers/ and Properties/ -->
     <ItemGroup>
-        <PackageReference Include="QuickLook.Common" Version="4.5.0" />
+        <Compile Include="Helpers\ColorParser.cs" />
+        <Compile Include="Helpers\EnvMaskingService.cs" />
+        <Compile Include="Helpers\ColorSwatchRenderer.cs" />
+        <Compile Include="Properties\AssemblyInfo.cs" />
     </ItemGroup>
 </Project>

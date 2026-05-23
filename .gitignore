@@ -1,24 +1,39 @@
-# Visual Studio artifacts
-.vs/
+# ============================================================
+# .gitignore — QuickLook.Plugin.DevPowerTool
+# ============================================================
+
+# Build outputs
 bin/
 obj/
+staging_*/
+
+# Package artifacts
+*.qlplugin
+*.zip
+
+# Visual Studio
+.vs/
 *.user
 *.suo
 *.userosscache
 *.sln.docstates
-
-# NuGet
-packages/
-*.nupkg
-*.nuget.props
-*.nuget.targets
-
-# Build output
-*.qlplugin
+*.userprefs
 
 # Rider / JetBrains
 .idea/
+*.sln.iml
 
-# OS
-Thumbs.db
+# NuGet
+*.nupkg
+packages/
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+# OS artefacts
 .DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log

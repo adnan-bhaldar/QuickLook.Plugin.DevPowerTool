@@ -1,26 +1,35 @@
 // ============================================================
 // QuickLook.Plugin.DevPowerTool — Helpers/ColorParser.cs
-// Detects CSS color tokens in a line of text using compiled
-// regular expressions for best performance on large files.
-// Net462 compatible — no Math.Clamp (that is .NET 5+).
+//
+// Stateless colour token extractor.
+// All five regex patterns are compiled once at class load time
+// (RegexOptions.Compiled) so repeated per-line calls are fast.
+//
+// Supported formats
+//   #rgb            e.g. #fff
+//   #rrggbb         e.g. #1a2b3c
+//   #rrggbbaa       e.g. #1a2b3cff
+//   rgb(r,g,b)
+//   rgba(r,g,b,a)
+//   hsl(h,s%,l%)
+//   hsla(h,s%,l%,a)
 // ============================================================
-
 using System;
 using System.Collections.Generic;
 using System.Text.RegularExpressions;
 using System.Windows.Media;
 
-namespace QuickLook.Plugin.DevPowerTool
+namespace QuickLook.Plugin.DevPowerTool.Helpers
 {
     /// <summary>
-    /// Represents one colour token found inside a line of source text.
+    /// A single colour token found inside one line of source text.
     /// </summary>
     public sealed class ColorToken
     {
-        /// <summary>Zero-based char index where the token starts in the line.</summary>
+        /// <summary>Zero-based character index within the line.</summary>
         public int Index { get; set; }
 
-        /// <summary>Raw text of the colour token, e.g. "#ff6600" or "rgb(255,0,0)".</summary>
+        /// <summary>The raw matched string (e.g. "#ff0000" or "rgba(255,0,0,1)").</summary>
         public string Raw { get; set; }
 
         /// <summary>Parsed WPF colour, or null if parsing failed.</summary>
@@ -28,216 +37,275 @@ namespace QuickLook.Plugin.DevPowerTool
     }
 
     /// <summary>
-    /// Stateless utility that extracts colour tokens from a line of text.
-    /// All regexes are pre-compiled at class initialisation time.
+    /// Parses one line of text and returns every colour token it contains.
+    /// Thread-safe — all state is in compiled static regexes.
     /// </summary>
     public static class ColorParser
     {
         // ── Compiled regexes ──────────────────────────────────────────────
 
-        // Hex: #rgb, #rrggbb, #rrggbbaa  (case-insensitive)
-        private static readonly Regex HexRegex = new Regex(
-            @"#(?:[0-9A-Fa-f]{8}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{3,4})\b",
+        // #rrggbbaa / #rrggbb / #rgb  (case-insensitive)
+        private static readonly Regex RxHex = new Regex(
+            @"#([0-9A-Fa-f]{8}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{3})\b",
             RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
-        // rgb(r, g, b)
-        private static readonly Regex RgbRegex = new Regex(
+        // rgb(r, g, b)  — integers or percentages
+        private static readonly Regex RxRgb = new Regex(
             @"rgb\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*\)",
             RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
         // rgba(r, g, b, a)
-        private static readonly Regex RgbaRegex = new Regex(
+        private static readonly Regex RxRgba = new Regex(
             @"rgba\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*([\d.]+)\s*\)",
             RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
         // hsl(h, s%, l%)
-        private static readonly Regex HslRegex = new Regex(
+        private static readonly Regex RxHsl = new Regex(
             @"hsl\(\s*(\d{1,3})\s*,\s*([\d.]+)%\s*,\s*([\d.]+)%\s*\)",
             RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
         // hsla(h, s%, l%, a)
-        private static readonly Regex HslaRegex = new Regex(
+        private static readonly Regex RxHsla = new Regex(
             @"hsla\(\s*(\d{1,3})\s*,\s*([\d.]+)%\s*,\s*([\d.]+)%\s*,\s*([\d.]+)\s*\)",
             RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
         // ── Public API ────────────────────────────────────────────────────
 
         /// <summary>
-        /// Returns all colour tokens found in <paramref name="line"/>, sorted
-        /// by their start index so callers can split the line sequentially.
+        /// Parses <paramref name="line"/> and returns one <see cref="ColorToken"/>
+        /// per detected colour value, in left-to-right order.
+        /// Returns an empty list when no colours are found.
         /// </summary>
         public static List<ColorToken> ParseLine(string line)
         {
-            var results = new List<ColorToken>();
+            if (string.IsNullOrEmpty(line))
+                return new List<ColorToken>(0);
 
-            ExtractHex(line, results);
-            ExtractRgb(line, results);
-            ExtractRgba(line, results);
-            ExtractHsl(line, results);
-            ExtractHsla(line, results);
+            var tokens = new List<ColorToken>();
 
-            results.Sort((a, b) => a.Index.CompareTo(b.Index));
-            return RemoveOverlaps(results);
+            AddHexMatches(line, tokens);
+            AddRgbMatches(line, tokens);
+            AddRgbaMatches(line, tokens);
+            AddHslMatches(line, tokens);
+            AddHslaMatches(line, tokens);
+
+            // Sort by position so callers get tokens left-to-right
+            tokens.Sort((a, b) => a.Index.CompareTo(b.Index));
+
+            return tokens;
         }
 
-        // ── Private helpers ───────────────────────────────────────────────
+        // ── Private match helpers ─────────────────────────────────────────
 
-        /// <summary>Clamps value between min and max. Replaces Math.Clamp (not in net462).</summary>
-        private static int Clamp(int value, int min, int max)
+        private static void AddHexMatches(string line, List<ColorToken> tokens)
         {
-            if (value < min) return min;
-            if (value > max) return max;
-            return value;
-        }
-
-        private static void ExtractHex(string line, List<ColorToken> list)
-        {
-            foreach (Match m in HexRegex.Matches(line))
+            foreach (Match m in RxHex.Matches(line))
             {
-                var color = ParseHex(m.Value);
-                list.Add(new ColorToken { Index = m.Index, Raw = m.Value, Color = color });
+                var color = ParseHex(m.Groups[1].Value);
+                tokens.Add(new ColorToken
+                {
+                    Index = m.Index,
+                    Raw   = m.Value,
+                    Color = color
+                });
             }
         }
 
-        private static void ExtractRgb(string line, List<ColorToken> list)
+        private static void AddRgbMatches(string line, List<ColorToken> tokens)
         {
-            foreach (Match m in RgbRegex.Matches(line))
+            foreach (Match m in RxRgb.Matches(line))
             {
-                if (!TryByte(m.Groups[1].Value, out byte r)) continue;
-                if (!TryByte(m.Groups[2].Value, out byte g)) continue;
-                if (!TryByte(m.Groups[3].Value, out byte b)) continue;
-                list.Add(new ColorToken { Index = m.Index, Raw = m.Value, Color = Color.FromRgb(r, g, b) });
+                if (!TryParseInt(m.Groups[1].Value, out byte r)) continue;
+                if (!TryParseInt(m.Groups[2].Value, out byte g)) continue;
+                if (!TryParseInt(m.Groups[3].Value, out byte b)) continue;
+
+                tokens.Add(new ColorToken
+                {
+                    Index = m.Index,
+                    Raw   = m.Value,
+                    Color = System.Windows.Media.Color.FromRgb(r, g, b)
+                });
             }
         }
 
-        private static void ExtractRgba(string line, List<ColorToken> list)
+        private static void AddRgbaMatches(string line, List<ColorToken> tokens)
         {
-            foreach (Match m in RgbaRegex.Matches(line))
+            foreach (Match m in RxRgba.Matches(line))
             {
-                if (!TryByte(m.Groups[1].Value, out byte r)) continue;
-                if (!TryByte(m.Groups[2].Value, out byte g)) continue;
-                if (!TryByte(m.Groups[3].Value, out byte b)) continue;
-                if (!double.TryParse(m.Groups[4].Value, out double a)) continue;
-                var alpha = (byte)Clamp((int)(a * 255), 0, 255);
-                list.Add(new ColorToken { Index = m.Index, Raw = m.Value, Color = Color.FromArgb(alpha, r, g, b) });
+                if (!TryParseInt(m.Groups[1].Value, out byte r)) continue;
+                if (!TryParseInt(m.Groups[2].Value, out byte g)) continue;
+                if (!TryParseInt(m.Groups[3].Value, out byte b)) continue;
+                if (!double.TryParse(m.Groups[4].Value,
+                        System.Globalization.NumberStyles.Float,
+                        System.Globalization.CultureInfo.InvariantCulture,
+                        out double alpha)) continue;
+
+                byte a = (byte)Math.Round(Math.Max(0, Math.Min(1, alpha)) * 255);
+
+                tokens.Add(new ColorToken
+                {
+                    Index = m.Index,
+                    Raw   = m.Value,
+                    Color = System.Windows.Media.Color.FromArgb(a, r, g, b)
+                });
             }
         }
 
-        private static void ExtractHsl(string line, List<ColorToken> list)
+        private static void AddHslMatches(string line, List<ColorToken> tokens)
         {
-            foreach (Match m in HslRegex.Matches(line))
+            foreach (Match m in RxHsl.Matches(line))
             {
-                if (!double.TryParse(m.Groups[1].Value, out double h)) continue;
-                if (!double.TryParse(m.Groups[2].Value, out double s)) continue;
-                if (!double.TryParse(m.Groups[3].Value, out double l)) continue;
-                list.Add(new ColorToken { Index = m.Index, Raw = m.Value, Color = HslToColor(h, s / 100.0, l / 100.0, 1.0) });
+                if (!double.TryParse(m.Groups[1].Value,
+                        System.Globalization.NumberStyles.Float,
+                        System.Globalization.CultureInfo.InvariantCulture,
+                        out double h)) continue;
+                if (!double.TryParse(m.Groups[2].Value,
+                        System.Globalization.NumberStyles.Float,
+                        System.Globalization.CultureInfo.InvariantCulture,
+                        out double s)) continue;
+                if (!double.TryParse(m.Groups[3].Value,
+                        System.Globalization.NumberStyles.Float,
+                        System.Globalization.CultureInfo.InvariantCulture,
+                        out double l)) continue;
+
+                var color = HslToColor(h, s / 100.0, l / 100.0, 1.0);
+                tokens.Add(new ColorToken
+                {
+                    Index = m.Index,
+                    Raw   = m.Value,
+                    Color = color
+                });
             }
         }
 
-        private static void ExtractHsla(string line, List<ColorToken> list)
+        private static void AddHslaMatches(string line, List<ColorToken> tokens)
         {
-            foreach (Match m in HslaRegex.Matches(line))
+            foreach (Match m in RxHsla.Matches(line))
             {
-                if (!double.TryParse(m.Groups[1].Value, out double h)) continue;
-                if (!double.TryParse(m.Groups[2].Value, out double s)) continue;
-                if (!double.TryParse(m.Groups[3].Value, out double l)) continue;
-                if (!double.TryParse(m.Groups[4].Value, out double a)) continue;
-                list.Add(new ColorToken { Index = m.Index, Raw = m.Value, Color = HslToColor(h, s / 100.0, l / 100.0, a) });
+                if (!double.TryParse(m.Groups[1].Value,
+                        System.Globalization.NumberStyles.Float,
+                        System.Globalization.CultureInfo.InvariantCulture,
+                        out double h)) continue;
+                if (!double.TryParse(m.Groups[2].Value,
+                        System.Globalization.NumberStyles.Float,
+                        System.Globalization.CultureInfo.InvariantCulture,
+                        out double s)) continue;
+                if (!double.TryParse(m.Groups[3].Value,
+                        System.Globalization.NumberStyles.Float,
+                        System.Globalization.CultureInfo.InvariantCulture,
+                        out double l)) continue;
+                if (!double.TryParse(m.Groups[4].Value,
+                        System.Globalization.NumberStyles.Float,
+                        System.Globalization.CultureInfo.InvariantCulture,
+                        out double alpha)) continue;
+
+                var color = HslToColor(h, s / 100.0, l / 100.0, alpha);
+                tokens.Add(new ColorToken
+                {
+                    Index = m.Index,
+                    Raw   = m.Value,
+                    Color = color
+                });
             }
         }
 
+        // ── Colour conversion helpers ─────────────────────────────────────
+
+        /// <summary>
+        /// Parses a hex colour component string (3, 6, or 8 hex digits, no leading #).
+        /// Returns null on parse failure.
+        /// </summary>
         private static Color? ParseHex(string hex)
         {
             try
             {
-                var raw = hex.TrimStart('#');
-                byte a = 255, r, g, b;
-
-                switch (raw.Length)
+                switch (hex.Length)
                 {
                     case 3:
-                        r = Convert.ToByte(new string(raw[0], 2), 16);
-                        g = Convert.ToByte(new string(raw[1], 2), 16);
-                        b = Convert.ToByte(new string(raw[2], 2), 16);
-                        break;
-                    case 4:
-                        r = Convert.ToByte(new string(raw[0], 2), 16);
-                        g = Convert.ToByte(new string(raw[1], 2), 16);
-                        b = Convert.ToByte(new string(raw[2], 2), 16);
-                        a = Convert.ToByte(new string(raw[3], 2), 16);
-                        break;
+                        // Expand shorthand: "abc" → "aabbcc"
+                        byte r3 = HexByte(hex[0], hex[0]);
+                        byte g3 = HexByte(hex[1], hex[1]);
+                        byte b3 = HexByte(hex[2], hex[2]);
+                        return System.Windows.Media.Color.FromRgb(r3, g3, b3);
+
                     case 6:
-                        r = Convert.ToByte(raw.Substring(0, 2), 16);
-                        g = Convert.ToByte(raw.Substring(2, 2), 16);
-                        b = Convert.ToByte(raw.Substring(4, 2), 16);
-                        break;
+                        byte r6 = HexByte(hex[0], hex[1]);
+                        byte g6 = HexByte(hex[2], hex[3]);
+                        byte b6 = HexByte(hex[4], hex[5]);
+                        return System.Windows.Media.Color.FromRgb(r6, g6, b6);
+
                     case 8:
-                        r = Convert.ToByte(raw.Substring(0, 2), 16);
-                        g = Convert.ToByte(raw.Substring(2, 2), 16);
-                        b = Convert.ToByte(raw.Substring(4, 2), 16);
-                        a = Convert.ToByte(raw.Substring(6, 2), 16);
-                        break;
-                    default:
-                        return null;
+                        byte r8 = HexByte(hex[0], hex[1]);
+                        byte g8 = HexByte(hex[2], hex[3]);
+                        byte b8 = HexByte(hex[4], hex[5]);
+                        byte a8 = HexByte(hex[6], hex[7]);
+                        return System.Windows.Media.Color.FromArgb(a8, r8, g8, b8);
                 }
-                return Color.FromArgb(a, r, g, b);
             }
-            catch { return null; }
+            catch { /* fall through */ }
+            return null;
         }
 
-        private static Color HslToColor(double h, double s, double l, double a)
+        private static byte HexByte(char hi, char lo)
+            => (byte)((HexNibble(hi) << 4) | HexNibble(lo));
+
+        private static int HexNibble(char c)
+        {
+            if (c >= '0' && c <= '9') return c - '0';
+            if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+            if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+            throw new FormatException("Invalid hex char: " + c);
+        }
+
+        private static bool TryParseInt(string s, out byte value)
+        {
+            if (int.TryParse(s, out int i) && i >= 0 && i <= 255)
+            {
+                value = (byte)i;
+                return true;
+            }
+            value = 0;
+            return false;
+        }
+
+        /// <summary>
+        /// Converts HSL (hue 0–360, saturation 0–1, lightness 0–1, alpha 0–1)
+        /// to a WPF <see cref="Color"/>.
+        /// </summary>
+        private static Color HslToColor(double h, double s, double l, double alpha)
         {
             double r, g, b;
-            if (Math.Abs(s) < 1e-9)
+
+            if (Math.Abs(s) < 1e-10)
             {
-                r = g = b = l;
+                r = g = b = l; // achromatic
             }
             else
             {
                 double q = l < 0.5 ? l * (1 + s) : l + s - l * s;
                 double p = 2 * l - q;
-                r = HueToRgb(p, q, h / 360.0 + 1.0 / 3.0);
-                g = HueToRgb(p, q, h / 360.0);
-                b = HueToRgb(p, q, h / 360.0 - 1.0 / 3.0);
+                double hNorm = h / 360.0;
+                r = Hue2Rgb(p, q, hNorm + 1.0 / 3.0);
+                g = Hue2Rgb(p, q, hNorm);
+                b = Hue2Rgb(p, q, hNorm - 1.0 / 3.0);
             }
 
-            return Color.FromArgb(
-                (byte)Clamp((int)(a * 255), 0, 255),
-                (byte)Clamp((int)(r * 255), 0, 255),
-                (byte)Clamp((int)(g * 255), 0, 255),
-                (byte)Clamp((int)(b * 255), 0, 255));
+            byte a = (byte)Math.Round(Math.Max(0, Math.Min(1, alpha)) * 255);
+            return System.Windows.Media.Color.FromArgb(
+                a,
+                (byte)Math.Round(Math.Max(0, Math.Min(1, r)) * 255),
+                (byte)Math.Round(Math.Max(0, Math.Min(1, g)) * 255),
+                (byte)Math.Round(Math.Max(0, Math.Min(1, b)) * 255));
         }
 
-        private static double HueToRgb(double p, double q, double t)
+        private static double Hue2Rgb(double p, double q, double t)
         {
             if (t < 0) t += 1;
             if (t > 1) t -= 1;
-            if (t < 1.0 / 6) return p + (q - p) * 6 * t;
-            if (t < 1.0 / 2) return q;
-            if (t < 2.0 / 3) return p + (q - p) * (2.0 / 3 - t) * 6;
+            if (t < 1.0 / 6.0) return p + (q - p) * 6 * t;
+            if (t < 1.0 / 2.0) return q;
+            if (t < 2.0 / 3.0) return p + (q - p) * (2.0 / 3.0 - t) * 6;
             return p;
-        }
-
-        private static bool TryByte(string s, out byte value)
-        {
-            if (byte.TryParse(s, out value)) return true;
-            value = 0;
-            return false;
-        }
-
-        private static List<ColorToken> RemoveOverlaps(List<ColorToken> sorted)
-        {
-            var clean = new List<ColorToken>();
-            int endOfLast = 0;
-            foreach (var t in sorted)
-            {
-                if (t.Index >= endOfLast)
-                {
-                    clean.Add(t);
-                    endOfLast = t.Index + t.Raw.Length;
-                }
-            }
-            return clean;
         }
     }
 }
