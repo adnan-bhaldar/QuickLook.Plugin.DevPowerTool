@@ -48,11 +48,4 @@
             <CopyToOutputDirectory>Always</CopyToOutputDirectory>
         </None>
     </ItemGroup>
-    <!-- Compile all .cs files under Helpers/ and Properties/ -->
-    <ItemGroup>
-        <Compile Include="Helpers\ColorParser.cs" />
-        <Compile Include="Helpers\EnvMaskingService.cs" />
-        <Compile Include="Helpers\ColorSwatchRenderer.cs" />
-        <Compile Include="Properties\AssemblyInfo.cs" />
-    </ItemGroup>
 </Project>
