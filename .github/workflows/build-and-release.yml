@@ -81,11 +81,12 @@ jobs:
 
           Compress-Archive -Path "$TempDir\*" -DestinationPath $OutFile -Force
           Write-Host "Packaged: $OutFile"
-            - name: Upload build artifact
-              uses: actions/upload-artifact@v4
-              with:
-                name: QuickLook.Plugin.DevPowerTool
-                path: QuickLook.Plugin.DevPowerTool.qlplugin
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: QuickLook.Plugin.DevPowerTool
+          path: QuickLook.Plugin.DevPowerTool.qlplugin
 
   # ───────────────────────────────────────────────────────────
   # JOB 2 — Publish pre-release (main branch only)
