@@ -1,28 +1,24 @@
 // ============================================================
 // QuickLook.Plugin.DevPowerTool — Properties/AssemblyInfo.cs
-// Standard assembly metadata. Must be present because the
-// .csproj sets GenerateAssemblyInfo=false (matching HelloWorld).
 // ============================================================
-
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Windows;
 
 [assembly: AssemblyTitle("QuickLook.Plugin.DevPowerTool")]
-[assembly: AssemblyDescription("Developer Power-User preview plugin for QuickLook: colour swatches and .env privacy masking.")]
+[assembly: AssemblyDescription("Developer Power-User preview plugin for QuickLook: inline colour swatches and .env privacy masking.")]
 [assembly: AssemblyConfiguration("")]
-[assembly: AssemblyCompany("")]
+[assembly: AssemblyCompany("adnan-bhaldar")]
 [assembly: AssemblyProduct("QuickLook.Plugin.DevPowerTool")]
-[assembly: AssemblyCopyright("MIT License")]
+[assembly: AssemblyCopyright("Copyright © 2025 adnan-bhaldar")]
 [assembly: AssemblyTrademark("")]
 [assembly: AssemblyCulture("")]
-
 [assembly: ComVisible(false)]
+[assembly: AssemblyVersion("2.0.0.0")]
+[assembly: AssemblyFileVersion("2.0.0.0")]
 
-// Required for WPF merged resource dictionaries to work at runtime
+// Required for WPF resources defined in code-behind only (no XAML)
 [assembly: ThemeInfo(
     ResourceDictionaryLocation.None,
-    ResourceDictionaryLocation.SourceAssembly)]
-
-[assembly: AssemblyVersion("1.0.0.0")]
-[assembly: AssemblyFileVersion("1.0.0.0")]
+    ResourceDictionaryLocation.SourceAssembly
+)]

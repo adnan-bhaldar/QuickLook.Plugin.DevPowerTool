@@ -1,9 +1,8 @@
 // ============================================================
 // QuickLook.Plugin.DevPowerTool — Plugin.cs
-// Entry point. Implements IViewer and is discovered by QuickLook
-// at runtime via reflection.
+// Entry point. Implements IViewer; discovered by QuickLook
+// at runtime via reflection scanning the plugin DLL.
 // ============================================================
-
 using System;
 using System.IO;
 using System.Windows;
@@ -13,28 +12,26 @@ namespace QuickLook.Plugin.DevPowerTool
 {
     /// <summary>
     /// Main plugin class. QuickLook discovers this via the IViewer interface.
-    /// Priority 0 = standard; raise to override other text plugins for these
-    /// specific extensions.
+    /// Priority 0 = standard level; the file-type checks in CanHandle ensure
+    /// we only claim files we know how to render.
     /// </summary>
     public class Plugin : IViewer
     {
-        // ── Supported file extensions ──────────────────────────────────────
+        // ── Supported file extensions / names ────────────────────────────
+
+        // Direct extension matches (colour-swatch mode)
         private static readonly string[] ColorExtensions =
         {
             ".css", ".scss", ".sass"
         };
 
-        private static readonly string[] ColorConfigExtensions =
+        // Generic theme / config files matched by extension (colour-swatch mode)
+        private static readonly string[] ThemeExtensions =
         {
             ".json", ".js", ".ts"
         };
 
-        private static readonly string[] EnvExtensions =
-        {
-            ".env"
-        };
-
-        // Tailwind config file names (matched by name, not only extension)
+        // Tailwind config matched by exact file name (colour-swatch mode)
         private static readonly string[] TailwindNames =
         {
             "tailwind.config.js",
@@ -43,7 +40,7 @@ namespace QuickLook.Plugin.DevPowerTool
             "tailwind.config.mjs"
         };
 
-        // .env variant suffixes / full names
+        // .env variants matched by exact file name (privacy-mask mode)
         private static readonly string[] EnvNames =
         {
             ".env",
@@ -54,41 +51,40 @@ namespace QuickLook.Plugin.DevPowerTool
             ".env.test"
         };
 
-        // ── IViewer ────────────────────────────────────────────────────────
+        // ── IViewer ───────────────────────────────────────────────────────
 
-        /// <summary>Priority 0 — standard level. Increase if needed.</summary>
+        /// <summary>Priority 0 — standard level.</summary>
         public int Priority => 0;
 
-        /// <summary>One-time init when QuickLook loads the plugin.</summary>
+        /// <summary>One-time initialisation when QuickLook loads the plugin.</summary>
         public void Init() { /* nothing to initialise */ }
 
         /// <summary>
         /// Returns true when this plugin should handle the given path.
-        /// Checks extension AND known config file names.
+        /// Checks extension AND known config / .env file names.
         /// </summary>
         public bool CanHandle(string path)
         {
-            if (Directory.Exists(path))
-                return false;
+            if (string.IsNullOrEmpty(path)) return false;
+            if (Directory.Exists(path)) return false;
 
             var name = Path.GetFileName(path).ToLowerInvariant();
             var ext  = Path.GetExtension(path).ToLowerInvariant();
 
-            // .env variants — match by full file name
+            // .env variants — match by full file name (highest priority)
             foreach (var envName in EnvNames)
-                if (name == envName)
-                    return true;
-
-            // Colour-aware file types
-            foreach (var e in ColorExtensions)
-                if (ext == e) return true;
+                if (name == envName) return true;
 
             // Tailwind configs matched by name
             foreach (var twName in TailwindNames)
                 if (name == twName) return true;
 
-            // Generic .json / .js / .ts (theme / config files)
-            foreach (var e in ColorConfigExtensions)
+            // Stylesheet extensions
+            foreach (var e in ColorExtensions)
+                if (ext == e) return true;
+
+            // Generic config / theme file extensions
+            foreach (var e in ThemeExtensions)
                 if (ext == e) return true;
 
             return false;
@@ -99,12 +95,12 @@ namespace QuickLook.Plugin.DevPowerTool
         /// </summary>
         public void Prepare(string path, ContextObject context)
         {
-            context.PreferredSize = new Size { Width = 900, Height = 650 };
+            context.PreferredSize = new Size { Width = 920, Height = 660 };
         }
 
         /// <summary>
         /// Builds the viewer control and assigns it to context.ViewerContent.
-        /// QuickLook renders whatever WPF element you place there.
+        /// QuickLook renders whatever WPF element is placed there.
         /// </summary>
         public void View(string path, ContextObject context)
         {
@@ -119,7 +115,7 @@ namespace QuickLook.Plugin.DevPowerTool
             }
             catch (Exception ex)
             {
-                // Fallback: show error gracefully — never crash QuickLook
+                // Fallback: display a styled error — never crash QuickLook
                 var error = new ErrorPanel(ex.Message);
                 context.ViewerContent = error;
                 context.Title         = Path.GetFileName(path);

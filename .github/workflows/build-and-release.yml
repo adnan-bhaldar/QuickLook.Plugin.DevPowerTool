@@ -9,6 +9,12 @@
 # Every version tag (v1.0.0 OR 1.0.0):
 #   → builds the plugin
 #   → uploads .qlplugin to existing release or creates one
+#
+# NOTE: Uses MSBuild (not dotnet build) because the project
+# targets net462 (full .NET Framework) with WPF.
+# NuGet restore is done via  msbuild -t:Restore  because the
+# project uses PackageReference (SDK-style), not packages.config.
+# `nuget restore` only handles packages.config projects.
 # ============================================================
 
 name: Build and Release
@@ -40,8 +46,14 @@ jobs:
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
+      # SDK-style csproj + PackageReference → must use msbuild -t:Restore
+      # (nuget restore only works with packages.config projects)
       - name: Restore NuGet packages
-        run: nuget restore QuickLook.Plugin.DevPowerTool.sln
+        run: |
+          msbuild QuickLook.Plugin.DevPowerTool.sln `
+            /t:Restore `
+            /p:Configuration=Release `
+            /p:Platform="Any CPU"
 
       - name: Build solution
         run: |
@@ -135,12 +147,12 @@ jobs:
 
           notes = '''{}
 
-          > ⚠️ This is a pre-release built automatically from the latest commit on `main`.
+          > ⚠️ This is a pre-release built automatically from the latest commit on \`main\`.
           > For stable builds use a stable release.
 
           ### Install
           1. Make sure QuickLook is running
-          2. Press **Space** on the `.qlplugin` file
+          2. Press **Space** on the \`.qlplugin\` file
           3. Click **Install** then restart QuickLook
           '''.format(msg)
 
@@ -210,7 +222,7 @@ jobs:
 
           ### Install
           1. Make sure QuickLook is running
-          2. Press **Space** on the `.qlplugin` file
+          2. Press **Space** on the \`.qlplugin\` file
           3. Click **Install** then restart QuickLook
           '''.format(msg)
 
