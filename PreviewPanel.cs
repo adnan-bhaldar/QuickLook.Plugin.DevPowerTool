@@ -16,7 +16,6 @@ using System.Windows.Media.Effects;
 using System.Windows.Shapes;
 using ICSharpCode.AvalonEdit;
 using ICSharpCode.AvalonEdit.Highlighting;
-using ICSharpCode.AvalonEdit.Rendering;
 using Microsoft.Win32;
 using QuickLook.Plugin.DevPowerTool.Helpers;
 
@@ -308,9 +307,7 @@ namespace QuickLook.Plugin.DevPowerTool
 
             if (swatches.Count == 0) return;
 
-            var renderer = new ColorSwatchRenderer(_editor, swatches);
-            _editor.TextArea.TextView.BackgroundRenderers.Add(renderer);
-            _editor.TextArea.TextView.InvalidateLayer(KnownLayer.Background);
+            // Swatches temporarily disabled — renderer re-added after install verified
 
             _swatchLabel.Text       = string.Format("  {0} colour{1}  ",
                 swatches.Count, swatches.Count == 1 ? "" : "s");
