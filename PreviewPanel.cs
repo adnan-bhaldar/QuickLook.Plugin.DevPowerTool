@@ -1,6 +1,3 @@
-// ============================================================
-// QuickLook.Plugin.DevPowerTool — PreviewPanel.cs
-// ============================================================
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -23,8 +20,8 @@ namespace QuickLook.Plugin.DevPowerTool
 {
     public sealed class PreviewPanel : UserControl
     {
-        private const long   MaxFileBytes = 2 * 1024 * 1024;
-        private const int    MaxLines     = 5_000;
+        private const long   MaxBytes = 2 * 1024 * 1024;
+        private const int    MaxLines = 5000;
 
         private const double TrackW    = 38;
         private const double TrackH    = 22;
@@ -32,59 +29,51 @@ namespace QuickLook.Plugin.DevPowerTool
         private const double ThumbOff  = 2;
         private const double ThumbOn   = TrackW - ThumbSize - 2;
 
-        private static readonly Color TrackColorOff = Color.FromRgb(0x78, 0x78, 0x80);
-        private static readonly Color TrackColorOn  = Color.FromRgb(0x34, 0xC7, 0x59);
+        private static readonly Color ColOff = Color.FromRgb(0x78, 0x78, 0x80);
+        private static readonly Color ColOn  = Color.FromRgb(0x34, 0xC7, 0x59);
 
         private readonly string      _path;
-        private readonly DevFileType _fileType;
-        private readonly bool        _isDark;
-        private readonly Color       _fgColor;
-        private readonly Color       _bgColor;
+        private readonly DevFileType _type;
+        private readonly bool        _dark;
+        private readonly Color       _fg;
+        private readonly Color       _bg;
 
-        private TextEditor _editor;
-        private Border     _swatchBadge;
-        private TextBlock  _swatchLabel;
-        private Border     _toggleTrack;
-        private Ellipse    _toggleThumb;
-        private TextBlock  _toggleLabel;
-        private bool       _toggleAnimating;
+        private TextEditor _ed;
+        private Border     _badge;
+        private TextBlock  _badgeText;
+        private Border     _track;
+        private Ellipse    _thumb;
+        private TextBlock  _trackLabel;
+        private bool       _animating;
         private bool       _revealed;
-
-        private List<EnvLine>          _envLines;
+        private List<EnvLine> _env;
         private CancellationTokenSource _cts = new CancellationTokenSource();
 
-        public PreviewPanel(string path, DevFileType fileType)
+        public PreviewPanel(string path, DevFileType type)
         {
-            _path     = path;
-            _fileType = fileType;
-            _isDark   = DetectDarkTheme();
+            _path = path;
+            _type = type;
+            _dark = IsDark();
+            _bg   = _dark ? Color.FromRgb(0x1E, 0x1E, 0x1E) : Colors.White;
+            _fg   = _dark ? Color.FromRgb(0xD4, 0xD4, 0xD4) : Color.FromRgb(0x1E, 0x1E, 0x1E);
 
-            _bgColor = _isDark ? Color.FromRgb(0x1E, 0x1E, 0x1E) : Colors.White;
-            _fgColor = _isDark ? Color.FromRgb(0xD4, 0xD4, 0xD4) : Color.FromRgb(0x1E, 0x1E, 0x1E);
-
-            BuildUI();
-
-            Loaded   += OnLoaded;
-            Unloaded += OnUnloaded;
+            Build();
+            Loaded   += (s, e) => { var _ = LoadAsync(_cts.Token); };
+            Unloaded += (s, e) => { _cts.Cancel(); _cts.Dispose(); };
         }
 
         private void BuildUI()
         {
-            Background = new SolidColorBrush(_bgColor);
-            _editor    = BuildEditor();
+            Background = new SolidColorBrush(_bg);
+            _ed = MakeEditor();
 
             var root = new Grid();
-            root.Children.Add(_editor);
-
-            if (_fileType == DevFileType.EnvFile)
-                root.Children.Add(BuildEnvToggleOverlay());
-            else
-                root.Children.Add(BuildSwatchBadge());
-
+            root.Children.Add(_ed);
+            root.Children.Add(_type == DevFileType.EnvFile ? MakeToggle() : MakeBadge());
             Content = root;
         }
 
-        private TextEditor BuildEditor()
+        private TextEditor MakeEditor()
         {
             var ed = new TextEditor
             {
@@ -93,10 +82,13 @@ namespace QuickLook.Plugin.DevPowerTool
                 FontFamily      = new FontFamily("Cascadia Code, Consolas, Courier New, monospace"),
                 FontSize        = 13.5,
                 WordWrap        = false,
-                Foreground      = new SolidColorBrush(_fgColor),
-                Background      = new SolidColorBrush(_bgColor),
+                Foreground      = new SolidColorBrush(_fg),
+                Background      = new SolidColorBrush(_bg),
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
                 VerticalScrollBarVisibility   = ScrollBarVisibility.Auto,
+                LineNumbersForeground         = new SolidColorBrush(_dark
+                    ? Color.FromRgb(0x75, 0x75, 0x75)
+                    : Color.FromRgb(0xA0, 0xA0, 0xA0)),
                 Options = new TextEditorOptions
                 {
                     EnableHyperlinks            = false,
@@ -105,35 +97,29 @@ namespace QuickLook.Plugin.DevPowerTool
                     ConvertTabsToSpaces         = false,
                     IndentationSize             = 4,
                     AllowScrollBelowDocument    = false
-                },
-                LineNumbersForeground = new SolidColorBrush(_isDark
-                    ? Color.FromRgb(0x75, 0x75, 0x75)
-                    : Color.FromRgb(0xA0, 0xA0, 0xA0))
+                }
             };
-
             ed.SyntaxHighlighting = new PlainTextHighlighting();
-
             return ed;
         }
 
-        private Border BuildSwatchBadge()
+        private UIElement MakeBadge()
         {
-            _swatchLabel = new TextBlock
+            _badgeText = new TextBlock
             {
-                FontFamily = new FontFamily("Segoe UI, sans-serif"),
+                FontFamily = new FontFamily("Segoe UI"),
                 FontSize   = 11,
-                Foreground = new SolidColorBrush(_isDark
+                Foreground = new SolidColorBrush(_dark
                     ? Color.FromRgb(0xA6, 0xE3, 0xA1)
                     : Color.FromRgb(0x2E, 0x7D, 0x32))
             };
-
-            _swatchBadge = new Border
+            _badge = new Border
             {
-                Child               = _swatchLabel,
-                Background          = new SolidColorBrush(_isDark
+                Child               = _badgeText,
+                Background          = new SolidColorBrush(_dark
                     ? Color.FromArgb(210, 20, 45, 20)
                     : Color.FromArgb(210, 220, 245, 220)),
-                BorderBrush         = new SolidColorBrush(_isDark
+                BorderBrush         = new SolidColorBrush(_dark
                     ? Color.FromRgb(0x2E, 0x5C, 0x2E)
                     : Color.FromRgb(0x88, 0xCC, 0x88)),
                 BorderThickness     = new Thickness(1),
@@ -144,22 +130,20 @@ namespace QuickLook.Plugin.DevPowerTool
                 Margin              = new Thickness(52, 0, 0, 8),
                 Visibility          = Visibility.Collapsed
             };
-
-            return _swatchBadge;
+            return _badge;
         }
 
-        private UIElement BuildEnvToggleOverlay()
+        private UIElement MakeToggle()
         {
-            _toggleTrack = new Border
+            _track = new Border
             {
                 Width        = TrackW,
                 Height       = TrackH,
                 CornerRadius = new CornerRadius(TrackH / 2),
-                Background   = new SolidColorBrush(TrackColorOff),
+                Background   = new SolidColorBrush(ColOff),
                 Cursor       = Cursors.Hand
             };
-
-            _toggleThumb = new Ellipse
+            _thumb = new Ellipse
             {
                 Width               = ThumbSize,
                 Height              = ThumbSize,
@@ -168,48 +152,38 @@ namespace QuickLook.Plugin.DevPowerTool
                 VerticalAlignment   = VerticalAlignment.Center,
                 Margin              = new Thickness(ThumbOff, 0, 0, 0),
                 Effect              = new DropShadowEffect
-                {
-                    Color       = Colors.Black,
-                    Opacity     = 0.30,
-                    BlurRadius  = 4,
-                    ShadowDepth = 1
-                }
+                    { Color = Colors.Black, Opacity = 0.3, BlurRadius = 4, ShadowDepth = 1 }
             };
-
-            _toggleLabel = new TextBlock
+            _trackLabel = new TextBlock
             {
                 Text                = "Show secrets",
-                FontFamily          = new FontFamily("Segoe UI, sans-serif"),
+                FontFamily          = new FontFamily("Segoe UI"),
                 FontSize            = 10,
                 HorizontalAlignment = HorizontalAlignment.Center,
-                Foreground          = new SolidColorBrush(_isDark
+                Foreground          = new SolidColorBrush(_dark
                     ? Color.FromRgb(0x99, 0x99, 0x99)
                     : Color.FromRgb(0x66, 0x66, 0x66)),
                 Margin              = new Thickness(0, 4, 0, 0)
             };
 
-            var trackGrid = new Grid { Width = TrackW, Height = TrackH };
-            trackGrid.Children.Add(_toggleTrack);
-            trackGrid.Children.Add(_toggleThumb);
+            var tg = new Grid { Width = TrackW, Height = TrackH };
+            tg.Children.Add(_track);
+            tg.Children.Add(_thumb);
 
-            var stack = new StackPanel
-            {
-                Orientation         = Orientation.Vertical,
-                HorizontalAlignment = HorizontalAlignment.Center
-            };
-            stack.Children.Add(trackGrid);
-            stack.Children.Add(_toggleLabel);
+            var sp = new StackPanel { Orientation = Orientation.Vertical, HorizontalAlignment = HorizontalAlignment.Center };
+            sp.Children.Add(tg);
+            sp.Children.Add(_trackLabel);
 
-            _toggleTrack.MouseLeftButtonUp += (_, __) => Toggle();
-            stack.MouseLeftButtonUp        += (_, __) => Toggle();
+            _track.MouseLeftButtonUp += (_, __) => Toggle();
+            sp.MouseLeftButtonUp     += (_, __) => Toggle();
 
             return new Border
             {
-                Child               = stack,
+                Child               = sp,
                 HorizontalAlignment = HorizontalAlignment.Right,
                 VerticalAlignment   = VerticalAlignment.Top,
                 Margin              = new Thickness(0, 10, 16, 0),
-                Background          = new SolidColorBrush(_isDark
+                Background          = new SolidColorBrush(_dark
                     ? Color.FromArgb(180, 30, 30, 30)
                     : Color.FromArgb(180, 240, 240, 240)),
                 CornerRadius        = new CornerRadius(8),
@@ -217,67 +191,40 @@ namespace QuickLook.Plugin.DevPowerTool
             };
         }
 
-        private async void OnLoaded(object sender, RoutedEventArgs e)
-        {
-            await LoadFileAsync(_cts.Token);
-        }
-
-        private void OnUnloaded(object sender, RoutedEventArgs e)
-        {
-            _cts.Cancel();
-            _cts.Dispose();
-        }
-
-        private async Task LoadFileAsync(CancellationToken ct)
+        private async Task LoadAsync(CancellationToken ct)
         {
             try
             {
-                var info = new FileInfo(_path);
-
-                if (info.Length > MaxFileBytes)
+                if (new FileInfo(_path).Length > MaxBytes)
                 {
-                    SetText(string.Format(
-                        "[ File too large to preview: {0:N0} KB  —  limit is {1:N0} KB ]\n\n" +
-                        "Open the file in a text editor for full viewing.",
-                        info.Length / 1024, MaxFileBytes / 1024));
+                    SetText("[ File too large to preview ]");
                     return;
                 }
 
                 ct.ThrowIfCancellationRequested();
-
-                string raw = await Task.Run(() => ReadFile(_path), ct);
-
+                string raw = await Task.Run(() => File.ReadAllText(_path, Encoding.UTF8), ct);
                 ct.ThrowIfCancellationRequested();
 
-                if (_fileType == DevFileType.EnvFile)
+                if (_type == DevFileType.EnvFile)
                 {
-                    _envLines = EnvMaskingService.Parse(raw);
-                    RenderEnvDocument();
+                    _env = EnvMaskingService.Parse(raw);
+                    RenderEnv();
                 }
                 else
                 {
                     bool truncated;
-                    string text = TruncateLines(raw, MaxLines, out truncated);
-
-                    if (truncated)
-                        text += string.Format(
-                            "\n\n// ── Preview truncated at {0:N0} lines ──", MaxLines);
-
+                    string text = Truncate(raw, MaxLines, out truncated);
+                    if (truncated) text += "\n\n// ── Preview truncated ──";
                     SetText(text);
-
                     ct.ThrowIfCancellationRequested();
-
-                    await ScanAndRenderSwatchesAsync(text, ct);
+                    await ScanSwatchesAsync(text, ct);
                 }
             }
             catch (OperationCanceledException) { }
-            catch (Exception ex)
-            {
-                SetText("Could not load file:\n\n" + ex.GetType().Name + ": " + ex.Message);
-            }
+            catch (Exception ex) { SetText("Error: " + ex.Message); }
         }
 
-        private async Task ScanAndRenderSwatchesAsync(string text, CancellationToken ct)
+        private async Task ScanSwatchesAsync(string text, CancellationToken ct)
         {
             var swatches = new List<SwatchInfo>();
             var lines    = text.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None);
@@ -287,142 +234,103 @@ namespace QuickLook.Plugin.DevPowerTool
                 for (int i = 0; i < lines.Length; i++)
                 {
                     ct.ThrowIfCancellationRequested();
-
-                    foreach (var token in ColorParser.ParseLine(lines[i]))
+                    foreach (var t in ColorParser.ParseLine(lines[i]))
                     {
-                        if (!token.Color.HasValue) continue;
-
-                        swatches.Add(new SwatchInfo
-                        {
-                            Line        = i + 1,
-                            CharOffset  = token.Index,
-                            TokenLength = token.Raw.Length,
-                            Color       = token.Color.Value
-                        });
+                        if (t.Color.HasValue)
+                            swatches.Add(new SwatchInfo
+                            {
+                                Line = i + 1, CharOffset = t.Index,
+                                TokenLength = t.Raw.Length, Color = t.Color.Value
+                            });
                     }
                 }
             }, ct);
 
             ct.ThrowIfCancellationRequested();
-
             if (swatches.Count == 0) return;
 
-            // Swatches temporarily disabled — renderer re-added after install verified
+            var r = new ColorSwatchRenderer(_ed, swatches);
+            _ed.TextArea.TextView.BackgroundRenderers.Add(r);
+            _ed.TextArea.TextView.InvalidateLayer(KnownLayer.Background);
 
-            _swatchLabel.Text       = string.Format("  {0} colour{1}  ",
-                swatches.Count, swatches.Count == 1 ? "" : "s");
-            _swatchBadge.Visibility = Visibility.Visible;
+            _badgeText.Text    = string.Format("  {0} colour{1}  ", swatches.Count, swatches.Count == 1 ? "" : "s");
+            _badge.Visibility  = Visibility.Visible;
         }
 
-        private void RenderEnvDocument()
+        private void RenderEnv()
         {
-            if (_envLines == null) return;
-
-            var sb = new StringBuilder(_envLines.Count * 40);
-
-            for (int i = 0; i < _envLines.Count; i++)
+            if (_env == null) return;
+            var sb = new StringBuilder();
+            for (int i = 0; i < _env.Count; i++)
             {
                 if (i > 0) sb.Append('\n');
-                sb.Append(_envLines[i].DisplayText(_revealed));
+                sb.Append(_env[i].DisplayText(_revealed));
             }
-
             SetText(sb.ToString());
         }
 
         private void Toggle()
         {
-            if (_toggleAnimating) return;
+            if (_animating) return;
             _revealed = !_revealed;
-            AnimateToggle(_revealed);
-            _toggleLabel.Text = _revealed ? "Hide secrets" : "Show secrets";
-            RenderEnvDocument();
+            Animate(_revealed);
+            _trackLabel.Text = _revealed ? "Hide secrets" : "Show secrets";
+            RenderEnv();
         }
 
-        private void AnimateToggle(bool nowOn)
+        private void Animate(bool on)
         {
-            _toggleAnimating = true;
+            _animating = true;
 
-            var trackBrush = new SolidColorBrush(nowOn ? TrackColorOff : TrackColorOn);
-            _toggleTrack.Background = trackBrush;
-
-            trackBrush.BeginAnimation(
-                SolidColorBrush.ColorProperty,
+            var tb = new SolidColorBrush(on ? ColOff : ColOn);
+            _track.Background = tb;
+            tb.BeginAnimation(SolidColorBrush.ColorProperty,
                 new ColorAnimation
                 {
-                    To             = nowOn ? TrackColorOn : TrackColorOff,
-                    Duration       = TimeSpan.FromMilliseconds(200),
+                    To = on ? ColOn : ColOff,
+                    Duration = TimeSpan.FromMilliseconds(200),
                     EasingFunction = new CubicEase { EasingMode = EasingMode.EaseInOut }
                 });
 
-            double fromX = nowOn ? ThumbOff : ThumbOn;
-            double toX   = nowOn ? ThumbOn  : ThumbOff;
+            double fx = on ? ThumbOff : ThumbOn;
+            double tx = on ? ThumbOn  : ThumbOff;
+            _thumb.Margin = new Thickness(fx, 0, 0, 0);
 
-            _toggleThumb.Margin = new Thickness(fromX, 0, 0, 0);
-
-            var thumbAnim = new ThicknessAnimation
+            var ta = new ThicknessAnimation
             {
-                From           = new Thickness(fromX, 0, 0, 0),
-                To             = new Thickness(toX,   0, 0, 0),
-                Duration       = TimeSpan.FromMilliseconds(200),
+                From = new Thickness(fx, 0, 0, 0),
+                To   = new Thickness(tx, 0, 0, 0),
+                Duration = TimeSpan.FromMilliseconds(200),
                 EasingFunction = new CubicEase { EasingMode = EasingMode.EaseInOut }
             };
-
-            thumbAnim.Completed += (_, __) =>
-            {
-                _toggleThumb.Margin = new Thickness(toX, 0, 0, 0);
-                _toggleAnimating    = false;
-            };
-
-            _toggleThumb.BeginAnimation(MarginProperty, thumbAnim);
-        }
-
-        private static string ReadFile(string path)
-        {
-            using (var reader = new StreamReader(
-                path, Encoding.UTF8, detectEncodingFromByteOrderMarks: true))
-            {
-                return reader.ReadToEnd();
-            }
-        }
-
-        private static string TruncateLines(string text, int maxLines, out bool truncated)
-        {
-            var lines = text.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None);
-
-            if (lines.Length <= maxLines)
-            {
-                truncated = false;
-                return text;
-            }
-
-            truncated = true;
-            return string.Join("\n", lines, 0, maxLines);
+            ta.Completed += (_, __) => { _thumb.Margin = new Thickness(tx, 0, 0, 0); _animating = false; };
+            _thumb.BeginAnimation(MarginProperty, ta);
         }
 
         private void SetText(string text)
         {
-            if (!Dispatcher.CheckAccess())
-            {
-                Dispatcher.Invoke(() => SetText(text));
-                return;
-            }
-
-            _editor.IsReadOnly = false;
-            _editor.Text       = text ?? string.Empty;
-            _editor.IsReadOnly = true;
+            if (!Dispatcher.CheckAccess()) { Dispatcher.Invoke(() => SetText(text)); return; }
+            _ed.IsReadOnly = false;
+            _ed.Text       = text ?? string.Empty;
+            _ed.IsReadOnly = true;
         }
 
-        private static bool DetectDarkTheme()
+        private static string Truncate(string text, int max, out bool truncated)
+        {
+            var lines = text.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None);
+            if (lines.Length <= max) { truncated = false; return text; }
+            truncated = true;
+            return string.Join("\n", lines, 0, max);
+        }
+
+        private static bool IsDark()
         {
             try
             {
-                const string regKey =
-                    @"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize";
-                using (var key = Registry.CurrentUser.OpenSubKey(regKey))
+                using (var k = Registry.CurrentUser.OpenSubKey(
+                    @"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"))
                 {
-                    if (key == null) return false;
-                    var val = key.GetValue("AppsUseLightTheme");
-                    if (val is int i) return i == 0;
+                    if (k?.GetValue("AppsUseLightTheme") is int v) return v == 0;
                 }
             }
             catch { }
@@ -430,24 +338,15 @@ namespace QuickLook.Plugin.DevPowerTool
         }
     }
 
-    // ── PlainTextHighlighting ─────────────────────────────────────────────
-    // Minimal IHighlightingDefinition — no custom properties, no DefaultColor.
-    // Text colour is set directly on the TextEditor.Foreground DP instead.
-
+    // Minimal IHighlightingDefinition — no custom base classes, no DefaultColor.
+    // Text colour set via TextEditor.Foreground instead.
     internal sealed class PlainTextHighlighting : IHighlightingDefinition
     {
         public string Name => "PlainText";
-
         public HighlightingRuleSet MainRuleSet => new HighlightingRuleSet();
-
         public HighlightingRuleSet GetNamedRuleSet(string name) => null;
-
-        public HighlightingColor GetNamedColor(string name) => null;
-
-        public IEnumerable<HighlightingColor> NamedHighlightingColors
-            => new List<HighlightingColor>();
-
-        public IDictionary<string, string> Properties
-            => new Dictionary<string, string>();
+        public HighlightingColor GetNamedColor(string name)     => null;
+        public IEnumerable<HighlightingColor> NamedHighlightingColors => new List<HighlightingColor>();
+        public IDictionary<string, string> Properties => new Dictionary<string, string>();
     }
 }

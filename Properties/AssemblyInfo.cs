@@ -1,23 +1,11 @@
-// ============================================================
-// QuickLook.Plugin.DevPowerTool — Properties/AssemblyInfo.cs
-// ============================================================
 using System.Reflection;
-using System.Runtime.InteropServices;
 using System.Windows;
 
 [assembly: AssemblyTitle("QuickLook.Plugin.DevPowerTool")]
-[assembly: AssemblyDescription("Developer Power-User preview plugin for QuickLook: inline colour swatches and .env privacy masking.")]
-[assembly: AssemblyConfiguration("")]
+[assembly: AssemblyDescription("Developer Power-User preview plugin for QuickLook.")]
 [assembly: AssemblyCompany("adnan-bhaldar")]
 [assembly: AssemblyProduct("QuickLook.Plugin.DevPowerTool")]
-[assembly: AssemblyCopyright("Copyright © 2026 adnan-bhaldar")]
-[assembly: AssemblyTrademark("")]
-[assembly: AssemblyCulture("")]
-[assembly: ComVisible(false)]
+[assembly: AssemblyCopyright("Copyright © adnan-bhaldar")]
 [assembly: AssemblyVersion("2.0.0.0")]
 [assembly: AssemblyFileVersion("2.0.0.0")]
-
-[assembly: ThemeInfo(
-    ResourceDictionaryLocation.None,
-    ResourceDictionaryLocation.None
-)]
+[assembly: ThemeInfo(ResourceDictionaryLocation.None, ResourceDictionaryLocation.None)]

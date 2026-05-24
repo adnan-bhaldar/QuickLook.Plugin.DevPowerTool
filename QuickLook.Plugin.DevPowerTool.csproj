@@ -1,30 +1,19 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- QuickLook.Plugin.DevPowerTool — QuickLook.Plugin.DevPowerTool.csproj
-     Uses AvalonEdit same as QuickLook TextViewer.
-     QuickLook.Common supplied via NuGet — no git submodule required. -->
 <Project Sdk="Microsoft.NET.Sdk">
     <PropertyGroup>
         <OutputType>Library</OutputType>
         <TargetFramework>net462</TargetFramework>
         <RootNamespace>QuickLook.Plugin.DevPowerTool</RootNamespace>
         <AssemblyName>QuickLook.Plugin.DevPowerTool</AssemblyName>
-        <Platforms>AnyCPU;x64</Platforms>
         <UseWPF>true</UseWPF>
-        <UseWindowsForms>true</UseWindowsForms>
         <LangVersion>latest</LangVersion>
-        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+        <Nullable>disable</Nullable>
         <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
         <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
         <GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
         <DebugType>full</DebugType>
-        <Nullable>disable</Nullable>
-        <CodeAnalysisRuleSet>MinimumRecommendedRules.ruleset</CodeAnalysisRuleSet>
-        <Version>2.0.0</Version>
-        <Authors>adnan-bhaldar</Authors>
-        <Description>Developer Power-User preview plugin for QuickLook: inline colour swatches and .env privacy masking.</Description>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Configuration)' == 'Debug'">
-        <Optimize>false</Optimize>
         <OutputPath>bin\Debug\</OutputPath>
         <DefineConstants>DEBUG;TRACE</DefineConstants>
     </PropertyGroup>
@@ -33,17 +22,11 @@
         <OutputPath>bin\Release\</OutputPath>
         <DefineConstants>TRACE</DefineConstants>
     </PropertyGroup>
-    <!-- AvalonEdit — same version as QuickLook TextViewer -->
     <ItemGroup>
-        <PackageReference Include="AvalonEdit" Version="6.3.0.90" />
-    </ItemGroup>
-    <!-- QuickLook.Common via NuGet (replaces git submodule) -->
-    <ItemGroup>
+        <PackageReference Include="AvalonEdit" Version="6.3.1.120" />
         <PackageReference Include="QuickLook.Common" Version="4.5.0" />
     </ItemGroup>
-    <!-- Plugin metadata — config is copied to output so QuickLook can read it -->
     <ItemGroup>
-        <None Include="QuickLook.Plugin.Metadata.Base.config" />
         <None Include="QuickLook.Plugin.Metadata.config">
             <CopyToOutputDirectory>Always</CopyToOutputDirectory>
         </None>
