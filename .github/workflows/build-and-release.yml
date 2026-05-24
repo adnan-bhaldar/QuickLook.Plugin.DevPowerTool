@@ -9,6 +9,12 @@
 # Every version tag (v1.0.0 OR 1.0.0):
 #   → builds the plugin
 #   → uploads .qlplugin to existing release or creates one
+#
+# NOTE: Uses MSBuild (not dotnet build) because the project
+# targets net462 (full .NET Framework) with WPF.
+# NuGet restore is done via  msbuild -t:Restore  because the
+# project uses PackageReference (SDK-style), not packages.config.
+# `nuget restore` only handles packages.config projects.
 # ============================================================
 
 name: Build and Release
@@ -40,8 +46,14 @@ jobs:
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
+      # SDK-style csproj + PackageReference → must use msbuild -t:Restore
+      # (nuget restore only works with packages.config projects)
       - name: Restore NuGet packages
-        run: nuget restore QuickLook.Plugin.DevPowerTool.sln
+        run: |
+          msbuild QuickLook.Plugin.DevPowerTool.sln `
+            /t:Restore `
+            /p:Configuration=Release `
+            /p:Platform="Any CPU"
 
       - name: Build solution
         run: |
@@ -55,28 +67,19 @@ jobs:
         run: |
           $BinDir  = "bin\Release"
           $OutFile = "QuickLook.Plugin.DevPowerTool.qlplugin"
-          $TempDir = New-Item `
-            -ItemType Directory `
-            -Path "$env:TEMP\ql_pack" `
-            -Force
+          $TempDir = New-Item -ItemType Directory -Path "$env:TEMP\ql_pack" -Force
 
-          Copy-Item `
-            "$BinDir\QuickLook.Plugin.DevPowerTool.dll" `
-            -Destination $TempDir
+          Write-Host "=== Contents of $BinDir ==="
+          Get-ChildItem $BinDir | Select-Object Name, Length
 
-          Copy-Item `
-            "$BinDir\QuickLook.Plugin.Metadata.config" `
-            -Destination $TempDir
+          Copy-Item "$BinDir\QuickLook.Plugin.DevPowerTool.dll" -Destination $TempDir -ErrorAction Stop
+          Copy-Item "$BinDir\QuickLook.Plugin.Metadata.config"  -Destination $TempDir -ErrorAction Stop
+          Copy-Item "$BinDir\ICSharpCode.AvalonEdit.dll"        -Destination $TempDir -ErrorAction Stop
 
-          Copy-Item `
-            "$BinDir\ICSharpCode.AvalonEdit.dll" `
-            -Destination $TempDir
+          Write-Host "=== Contents of package ==="
+          Get-ChildItem $TempDir | Select-Object Name, Length
 
-          Compress-Archive `
-            -Path "$TempDir\*" `
-            -DestinationPath $OutFile `
-            -Force
-
+          Compress-Archive -Path "$TempDir\*" -DestinationPath $OutFile -Force
           Write-Host "Packaged: $OutFile"
 
       - name: Upload build artifact
@@ -135,12 +138,12 @@ jobs:
 
           notes = '''{}
 
-          > ⚠️ This is a pre-release built automatically from the latest commit on `main`.
+          > ⚠️ This is a pre-release built automatically from the latest commit on \`main\`.
           > For stable builds use a stable release.
 
           ### Install
           1. Make sure QuickLook is running
-          2. Press **Space** on the `.qlplugin` file
+          2. Press **Space** on the \`.qlplugin\` file
           3. Click **Install** then restart QuickLook
           '''.format(msg)
 
@@ -210,7 +213,7 @@ jobs:
 
           ### Install
           1. Make sure QuickLook is running
-          2. Press **Space** on the `.qlplugin` file
+          2. Press **Space** on the \`.qlplugin\` file
           3. Click **Install** then restart QuickLook
           '''.format(msg)
 

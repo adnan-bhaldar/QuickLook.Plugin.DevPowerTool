@@ -103,6 +103,12 @@ namespace QuickLook.Plugin.DevPowerTool.Helpers
             }
         }
 
+        // ── Colour conversion helpers ─────────────────────────────────────
+
+        /// <summary>
+        /// Parses a hex colour component string (3, 6, or 8 hex digits, no leading #).
+        /// Returns null on parse failure.
+        /// </summary>
         private static Color? ParseHex(string hex)
         {
             try
@@ -146,7 +152,7 @@ namespace QuickLook.Plugin.DevPowerTool.Helpers
             double r, g, b;
             if (Math.Abs(s) < 1e-10)
             {
-                r = g = b = l;
+                r = g = b = l; // achromatic
             }
             else
             {

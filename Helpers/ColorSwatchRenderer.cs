@@ -2,8 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Windows;
 using System.Windows.Media;
-using ICSharpCode.AvalonEdit;
-using ICSharpCode.AvalonEdit.Rendering;
 
 namespace QuickLook.Plugin.DevPowerTool.Helpers
 {

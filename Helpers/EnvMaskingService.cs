@@ -33,6 +33,9 @@ namespace QuickLook.Plugin.DevPowerTool.Helpers
         }
     }
 
+    /// <summary>
+    /// Parses raw .env text into a list of <see cref="EnvLine"/> records.
+    /// </summary>
     public static class EnvMaskingService
     {
         private static readonly Regex RxAssign = new Regex(
@@ -77,7 +80,8 @@ namespace QuickLook.Plugin.DevPowerTool.Helpers
                 result.Add(new EnvLine { Raw = line, Kind = EnvLineKind.PlainText });
             }
 
-            return result;
+            // Fallback — plain text (multi-line values, continuation lines, etc.)
+            return new EnvLine { Raw = line, Kind = EnvLineKind.PlainText };
         }
     }
 }

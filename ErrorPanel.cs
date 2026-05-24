@@ -5,6 +5,10 @@ using Microsoft.Win32;
 
 namespace QuickLook.Plugin.DevPowerTool
 {
+    /// <summary>
+    /// A themed error panel used as a safe fallback when file loading fails.
+    /// Constructed entirely in code — no XAML required.
+    /// </summary>
     public class ErrorPanel : UserControl
     {
         public ErrorPanel(string message)
@@ -15,13 +19,19 @@ namespace QuickLook.Plugin.DevPowerTool
                 ? Color.FromRgb(0x1E, 0x1E, 0x1E)
                 : Colors.White);
 
-            var stack = new StackPanel
+            var container = new Border
             {
-                Orientation         = Orientation.Vertical,
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment   = VerticalAlignment.Center
             };
 
+            var stack = new StackPanel
+            {
+                Orientation         = Orientation.Vertical,
+                HorizontalAlignment = HorizontalAlignment.Center
+            };
+
+            // Warning icon
             stack.Children.Add(new TextBlock
             {
                 Text                = "⚠  Preview Unavailable",
@@ -35,6 +45,7 @@ namespace QuickLook.Plugin.DevPowerTool
                 Margin              = new Thickness(0, 0, 0, 12)
             });
 
+            // Error message
             stack.Children.Add(new TextBlock
             {
                 Text            = message,
@@ -49,7 +60,8 @@ namespace QuickLook.Plugin.DevPowerTool
                 HorizontalAlignment = HorizontalAlignment.Center
             });
 
-            Content = stack;
+            container.Child = stack;
+            Content         = container;
         }
 
         private static bool IsDark()
@@ -63,7 +75,7 @@ namespace QuickLook.Plugin.DevPowerTool
                         return v == 0;
                 }
             }
-            catch { }
+            catch { /* registry unavailable — assume light */ }
             return false;
         }
     }

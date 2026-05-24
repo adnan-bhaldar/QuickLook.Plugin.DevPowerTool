@@ -11,6 +11,9 @@ namespace QuickLook.Plugin.DevPowerTool
         PlainText
     }
 
+    /// <summary>
+    /// Maps a file path to the appropriate <see cref="DevFileType"/>.
+    /// </summary>
     public static class FileTypeDetector
     {
         private static readonly string[] TailwindNames =
@@ -21,10 +24,18 @@ namespace QuickLook.Plugin.DevPowerTool
 
         private static readonly string[] EnvNames =
         {
-            ".env", ".env.local", ".env.production",
-            ".env.development", ".env.staging", ".env.test"
+            ".env",
+            ".env.local",
+            ".env.production",
+            ".env.development",
+            ".env.staging",
+            ".env.test"
         };
 
+        /// <summary>
+        /// Returns the <see cref="DevFileType"/> for <paramref name="path"/>.
+        /// Matching is case-insensitive and based on both name and extension.
+        /// </summary>
         public static DevFileType Detect(string path)
         {
             if (string.IsNullOrEmpty(path)) return DevFileType.PlainText;
