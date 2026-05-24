@@ -1,8 +1,3 @@
-// ============================================================
-// QuickLook.Plugin.DevPowerTool — ErrorPanel.cs
-// Fallback panel shown when the plugin fails to load a file.
-// ============================================================
-
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -14,9 +9,9 @@ namespace QuickLook.Plugin.DevPowerTool
     {
         public ErrorPanel(string message)
         {
-            bool isDark = IsSystemDarkTheme();
+            bool dark = IsDark();
 
-            Background = new SolidColorBrush(isDark
+            Background = new SolidColorBrush(dark
                 ? Color.FromRgb(0x1E, 0x1E, 0x1E)
                 : Colors.White);
 
@@ -24,59 +19,48 @@ namespace QuickLook.Plugin.DevPowerTool
             {
                 Orientation         = Orientation.Vertical,
                 HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment   = VerticalAlignment.Center,
-                Margin              = new Thickness(40)
+                VerticalAlignment   = VerticalAlignment.Center
             };
 
             stack.Children.Add(new TextBlock
             {
-                Text                = "⚠",
-                FontSize            = 36,
-                Foreground          = new SolidColorBrush(Color.FromRgb(0xF5, 0xC5, 0x18)),
+                Text                = "⚠  Preview Unavailable",
+                FontFamily          = new FontFamily("Segoe UI"),
+                FontSize            = 16,
+                FontWeight          = FontWeights.SemiBold,
+                Foreground          = new SolidColorBrush(dark
+                    ? Color.FromRgb(0xD4, 0xD4, 0xD4)
+                    : Color.FromRgb(0x1E, 0x1E, 0x1E)),
                 HorizontalAlignment = HorizontalAlignment.Center,
                 Margin              = new Thickness(0, 0, 0, 12)
             });
 
             stack.Children.Add(new TextBlock
             {
-                Text                = "Preview Unavailable",
-                FontFamily          = new FontFamily("Segoe UI, sans-serif"),
-                FontSize            = 16,
-                FontWeight          = FontWeights.SemiBold,
-                Foreground          = new SolidColorBrush(isDark
-                    ? Color.FromRgb(0xD4, 0xD4, 0xD4)
-                    : Color.FromRgb(0x1E, 0x1E, 0x1E)),
-                HorizontalAlignment = HorizontalAlignment.Center,
-                Margin              = new Thickness(0, 0, 0, 8)
-            });
-
-            stack.Children.Add(new TextBlock
-            {
-                Text                = message,
-                FontFamily          = new FontFamily("Cascadia Code, Consolas, monospace"),
-                FontSize            = 12,
-                Foreground          = new SolidColorBrush(isDark
+                Text            = message,
+                FontFamily      = new FontFamily("Consolas, Courier New"),
+                FontSize        = 12,
+                Foreground      = new SolidColorBrush(dark
                     ? Color.FromRgb(0xF3, 0x8B, 0xA8)
                     : Color.FromRgb(0xCC, 0x00, 0x00)),
-                HorizontalAlignment = HorizontalAlignment.Center,
-                TextWrapping        = TextWrapping.Wrap,
-                MaxWidth            = 500,
-                TextAlignment       = TextAlignment.Center
+                TextWrapping    = TextWrapping.Wrap,
+                MaxWidth        = 480,
+                TextAlignment   = TextAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Center
             });
 
             Content = stack;
         }
 
-        private static bool IsSystemDarkTheme()
+        private static bool IsDark()
         {
             try
             {
-                const string key = @"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize";
-                using (var reg = Registry.CurrentUser.OpenSubKey(key))
+                using (var key = Registry.CurrentUser.OpenSubKey(
+                    @"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"))
                 {
-                    if (reg == null) return false;
-                    var val = reg.GetValue("AppsUseLightTheme");
-                    if (val is int i) return i == 0;
+                    if (key?.GetValue("AppsUseLightTheme") is int v)
+                        return v == 0;
                 }
             }
             catch { }

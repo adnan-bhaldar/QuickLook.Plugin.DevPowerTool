@@ -1,26 +1,19 @@
-<?xml version="1.0" encoding="UTF-8" ?>
-<!-- QuickLook.Plugin.DevPowerTool — QuickLook.Plugin.DevPowerTool.csproj
-    Uses AvalonEdit same as QuickLook TextViewer. -->
+<?xml version="1.0" encoding="UTF-8"?>
 <Project Sdk="Microsoft.NET.Sdk">
     <PropertyGroup>
         <OutputType>Library</OutputType>
         <TargetFramework>net462</TargetFramework>
         <RootNamespace>QuickLook.Plugin.DevPowerTool</RootNamespace>
         <AssemblyName>QuickLook.Plugin.DevPowerTool</AssemblyName>
-        <Platforms>AnyCPU;x64</Platforms>
         <UseWPF>true</UseWPF>
-        <UseWindowsForms>true</UseWindowsForms>
         <LangVersion>latest</LangVersion>
-        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+        <Nullable>disable</Nullable>
         <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
         <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
         <GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
         <DebugType>full</DebugType>
-        <Nullable>disable</Nullable>
-        <CodeAnalysisRuleSet>MinimumRecommendedRules.ruleset</CodeAnalysisRuleSet>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Configuration)' == 'Debug'">
-        <Optimize>false</Optimize>
         <OutputPath>bin\Debug\</OutputPath>
         <DefineConstants>DEBUG;TRACE</DefineConstants>
     </PropertyGroup>
@@ -29,27 +22,13 @@
         <OutputPath>bin\Release\</OutputPath>
         <DefineConstants>TRACE</DefineConstants>
     </PropertyGroup>
-    <!-- Exclude old XAML files if they still exist on disk -->
     <ItemGroup>
-        <Page Remove="PreviewPanel.xaml" />
-        <Page Remove="ErrorPanel.xaml" />
-        <Compile Remove="PreviewPanel.xaml.cs" />
-        <Compile Remove="ErrorPanel.xaml.cs" />
-        <Compile Remove="Helpers\PreviewRenderer.cs" />
+        <PackageReference Include="AvalonEdit" Version="6.3.1.120" />
+        <PackageReference Include="QuickLook.Common" Version="4.5.0" />
     </ItemGroup>
-    <!-- AvalonEdit — same as QuickLook TextViewer -->
     <ItemGroup>
-        <PackageReference Include="AvalonEdit" Version="6.3.0.90" />
-    </ItemGroup>
-    <!-- Plugin metadata -->
-    <ItemGroup>
-        <None Include="QuickLook.Plugin.Metadata.Base.config" />
         <None Include="QuickLook.Plugin.Metadata.config">
             <CopyToOutputDirectory>Always</CopyToOutputDirectory>
         </None>
-    </ItemGroup>
-    <!-- QuickLook.Common via NuGet -->
-    <ItemGroup>
-        <PackageReference Include="QuickLook.Common" Version="4.5.0" />
     </ItemGroup>
 </Project>
