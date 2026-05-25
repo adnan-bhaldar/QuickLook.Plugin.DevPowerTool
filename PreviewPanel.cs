@@ -13,6 +13,7 @@ using System.Windows.Media.Effects;
 using System.Windows.Shapes;
 using ICSharpCode.AvalonEdit;
 using ICSharpCode.AvalonEdit.Highlighting;
+using ICSharpCode.AvalonEdit.Rendering;
 using Microsoft.Win32;
 using QuickLook.Plugin.DevPowerTool.Helpers;
 
@@ -62,7 +63,7 @@ namespace QuickLook.Plugin.DevPowerTool
             Unloaded += (s, e) => { _cts.Cancel(); _cts.Dispose(); };
         }
 
-        private void BuildUI()
+        private void Build()
         {
             Background = new SolidColorBrush(_bg);
             _ed = MakeEditor();
